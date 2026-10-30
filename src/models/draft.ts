@@ -159,8 +159,10 @@ export function parseRawModel(
     asPositiveInt(raw['maxInputTokens']) ??
     Math.max(1, (contextWindow || DEFAULT_MODEL_VALUES.contextWindow) - maxOutputTokens);
   const apiType = isApiType(raw['apiType']) ? raw['apiType'] : DEFAULT_API_TYPE;
-  const thinking = asBoolean(raw['thinking'], false);
   const supportsReasoningEffort = normalizeEffortLevels(raw['supportsReasoningEffort']);
+  // `thinking` 与 `supportsReasoningEffort` 是相互独立的声明：Copilot 只按强度列表
+  // 转发强度并在档位多于一个时显示选择器，因此任一存在都视为开启了思考。
+  const thinking = asBoolean(raw['thinking'], false) || supportsReasoningEffort.length > 0;
   const reasoningEffortFormat = isEffortFormat(raw['reasoningEffortFormat']) ? raw['reasoningEffortFormat'] : undefined;
   const defaultReasoningEffort = asNonEmptyString(raw['defaultReasoningEffort']);
 
@@ -283,7 +285,13 @@ export function applyDraftToRaw(
 
   const efforts = normalizeEffortLevels(draft.supportsReasoningEffort);
   if (draft.thinking) {
-    next['thinking'] = true;
+    // 只保留原配置已有的原生 thinking 声明：仅靠强度档位工作的模型不新增该字段，
+    // 避免把 Copilot 未声明的原生思考能力写进配置。没有强度时 thinking 是唯一声明。
+    if (existingRaw?.['thinking'] === true || efforts.length === 0) {
+      next['thinking'] = true;
+    } else {
+      delete next['thinking'];
+    }
     if (efforts.length > 0) {
       next['supportsReasoningEffort'] = efforts;
     } else {
@@ -400,7 +408,11 @@ export function validateDraft(draft: ModelDraft, context: ValidationContext): Va
   if (draft.thinking) {
     const efforts = normalizeEffortLevels(draft.supportsReasoningEffort);
     if (efforts.length === 0) {
-      issues.push({ field: 'supportsReasoningEffort', message: '启用思考后，请至少选择一个思考强度。' });
+      issues.push({
+        field: 'supportsReasoningEffort',
+        severity: 'warning',
+        message: '未选择思考强度：只会写入原生 thinking 能力，Copilot 不会显示强度选择器。',
+      });
     }
     if (draft.defaultReasoningEffort) {
       const matches = efforts.some((level) => level.toLowerCase() === draft.defaultReasoningEffort?.toLowerCase());

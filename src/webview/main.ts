@@ -1591,7 +1591,7 @@ function renderThinking(form: FormState): HTMLElement {
   fieldset.append(el('legend', {}, '思考设置'));
   fieldset.append(
     check(
-      '支持思考',
+      '支持思考/推理强度',
       draft.thinking,
       (value) => {
         updateDraft(
@@ -1605,7 +1605,7 @@ function renderThinking(form: FormState): HTMLElement {
           { render: true },
         );
       },
-      '声明模型具有思考能力；实际效果取决于服务方实现。',
+      '写入 supportsReasoningEffort：Copilot 据此转发强度，并在档位多于一个时显示思考强度选择器；原配置已有的 thinking 字段会保留。',
     ),
   );
 
@@ -1642,7 +1642,18 @@ function renderThinking(form: FormState): HTMLElement {
   }
   const chipsField = el('div', { class: 'field' });
   chipsField.append(el('div', { class: 'label-like' }, '支持的思考强度'), chips);
-  chipsField.append(el('div', { class: 'hint' }, '按服务方文档勾选；自定义值可在下方填写。'));
+  chipsField.append(
+    el(
+      'div',
+      { class: 'hint' },
+      '按服务方文档勾选；自定义值可在下方填写。只有一个档位时 Copilot 不显示选择器，但该强度仍会转发。',
+    ),
+  );
+  if (draft.supportsReasoningEffort.length === 0) {
+    chipsField.append(
+      el('div', { class: 'hint' }, '未选择档位时只会写入原生 thinking 能力，Copilot 不会显示强度选择器。'),
+    );
+  }
   fieldset.append(chipsField);
 
   const customInput = input('text', form.customEffortsText, (value) => {

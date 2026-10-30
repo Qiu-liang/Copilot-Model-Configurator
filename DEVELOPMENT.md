@@ -94,9 +94,9 @@ VS Code / Copilot 的 BYOK 配置仍在演进。截至本文核对时：
 | 最大输出 Tokens | `maxOutputTokens` | `number` | 正整数；输入与输出之和等于总窗口 |
 | 工具调用 | `toolCalling` | `boolean` | 仅在服务方真实支持时开启 |
 | 视觉模型 | `vision` | `boolean` | 是否允许图片输入 |
-| 思考能力 | `thinking` | `boolean` | 是否声明模型具有思考能力 |
+| 思考能力 | `thinking` | `boolean` | 原生思考能力声明；面板只保留已有值，不主动新增 |
 | 流式输出 | `streaming` | `boolean` | 默认开启；兼容性异常时可关闭 |
-| 支持的思考强度 | `supportsReasoningEffort` | `string[]` | 思考开启时至少一项；空数组等价于不提供选择 |
+| 支持的思考强度 | `supportsReasoningEffort` | `string[]` | 非空即视为开启思考；Copilot 在档位多于一个时显示选择器 |
 | 默认思考强度 | `defaultReasoningEffort` | `string` | 必须包含于支持列表；目标版本支持时才写入 |
 | 强度参数格式 | `reasoningEffortFormat` | 枚举 | 见下节 |
 
@@ -120,7 +120,7 @@ MVP 使用显式三个数值，并在总窗口变化时给出联动选项；不�
 
 ### 3.5 思考强度的语义
 
-思考强度不是 `thinking: true` 的同义词：前者声明思考能力，后者控制是否暴露、支持哪些强度以及请求中的强度值。
+`thinking` 与 `supportsReasoningEffort` 是 Copilot 相互独立的两个声明：前者声明原生思考能力（Messages 预算等），后者决定 Copilot 是否转发强度，以及是否在模型选择器里显示 `Thinking Effort` 选择器（档位多于一个时才显示，单档位仍会转发强度值）。
 
 | 格式选项 | 配置值 | 请求体字段 |
 | --- | --- | --- |
@@ -129,6 +129,10 @@ MVP 使用显式三个数值，并在总窗口变化时给出联动选项；不�
 | Messages | `messages` | 嵌套 `output_config.effort` |
 
 - 默认按 API 路径推导，同时允许高级用户覆盖。
+- 读取：`thinking === true` 或 `supportsReasoningEffort` 非空即视为开启思考，强度列表原样保留，不能因为缺少 `thinking` 就丢弃强度。
+- 写入：有强度时写 `supportsReasoningEffort`；只有原配置已声明 `thinking: true` 时才保留该字段，仅靠强度档位的模型不新增原生思考声明。
+- 开启但未选强度时只写入 `thinking: true`（原生思考），并以警告说明 Copilot 不会显示强度选择器。
+- 关闭思考时清空 `thinking` / `supportsReasoningEffort` / `reasoningEffortFormat` / `defaultReasoningEffort`。
 - 常用档位为 `low`、`medium`、`high`，实际允许值由模型和服务方决定，不在代码中强制只支持这三档。
 - 未声明 `supportsReasoningEffort` 时，Copilot 不应转发面板中随意填写的强度。
 - 当前 CustomOAI 源码未显式转发 `defaultReasoningEffort` 到最终端点能力对象；故“默认强度”列为兼容性增强项。若目标版本不生效，界面必须提示用户到模型选择器中调整，而不是保存一个无效选项。
@@ -458,7 +462,7 @@ export interface ModelResponse<T> {
 - 表单字段映射、往返转换、未知字段保留。
 - 总窗口、输入、输出的计算与边界值；`0`、负数、小数、非数字、超大值。
 - 模型 ID 和分组名去重；同组与跨组差异。
-- 思考关闭时清理强度；默认强度不在支持列表时拒绝保存。
+- 思考关闭时清理强度；仅有强度列表时读取为开启且原样保存；默认强度不在支持列表时拒绝保存。
 - 完整 `/chat/completions`、`/responses`、`/v1` 与基础 URL 的显示推导。
 - 三种思考强度参数格式的映射。
 - 导入非法 JSON、缺失字段、未知字段和不含密钥导出。

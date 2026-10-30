@@ -78,6 +78,48 @@ test('关闭思考会清理思考相关字段', () => {
   assert.equal('defaultReasoningEffort' in next, false);
 });
 
+test('仅有强度列表时读取为开启思考并保留档位', () => {
+  const model = parseRawModel(
+    { id: 'm', name: 'M', url: 'https://x.test', supportsReasoningEffort: ['low', 'high'] },
+    'customendpoint',
+    'G',
+  );
+  assert.ok(model);
+  assert.equal(model.thinking, true);
+  assert.deepEqual(model.supportsReasoningEffort, ['low', 'high']);
+});
+
+test('仅有 thinking 时读取为开启思考且档位为空', () => {
+  const model = parseRawModel({ id: 'm', name: 'M', url: 'https://x.test', thinking: true }, 'customendpoint', 'G');
+  assert.ok(model);
+  assert.equal(model.thinking, true);
+  assert.deepEqual(model.supportsReasoningEffort, []);
+});
+
+test('仅声明强度的模型原样保存时不新增 thinking 且保留档位', () => {
+  const existing = { id: 'm', supportsReasoningEffort: ['low', 'high'] };
+  const model = parseRawModel({ ...existing, name: 'M', url: 'https://x.test' }, 'customendpoint', 'G');
+  assert.ok(model);
+  const next = applyDraftToRaw(cloneDraft(model), existing, CAPS);
+  assert.equal('thinking' in next, false);
+  assert.deepEqual(next['supportsReasoningEffort'], ['low', 'high']);
+});
+
+test('已声明 thinking 的模型保存后仍保留该字段', () => {
+  const existing = { id: 'm', thinking: true, supportsReasoningEffort: ['low'] };
+  const model = parseRawModel({ ...existing, name: 'M', url: 'https://x.test' }, 'customendpoint', 'G');
+  assert.ok(model);
+  const next = applyDraftToRaw(cloneDraft(model), existing, CAPS);
+  assert.equal(next['thinking'], true);
+  assert.deepEqual(next['supportsReasoningEffort'], ['low']);
+});
+
+test('开启思考但没有强度时写入原生 thinking', () => {
+  const next = applyDraftToRaw(validDraft({ thinking: true, supportsReasoningEffort: [] }), undefined, CAPS);
+  assert.equal(next['thinking'], true);
+  assert.equal('supportsReasoningEffort' in next, false);
+});
+
 test('customoai 不会写入 apiType', () => {
   const next = applyDraftToRaw(validDraft({ vendor: 'customoai', apiType: 'responses' }), { id: 'm', apiType: 'responses' }, CAPS);
   assert.equal('apiType' in next, false);
@@ -196,13 +238,14 @@ test('URL 中的凭据被拒绝', () => {
   assert.ok(issues.some((issue) => issue.field === 'url'));
 });
 
-test('思考开启但无强度时拒绝保存', () => {
+test('思考开启但无强度时只给出警告', () => {
   const issues = validateDraft(validDraft({ thinking: true, supportsReasoningEffort: [] }), {
     siblingIds: [],
     existingGroupNames: [],
     capabilities: CAPS,
   });
-  assert.ok(issues.some((issue) => issue.field === 'supportsReasoningEffort'));
+  assert.equal(hasErrors(issues), false);
+  assert.ok(issues.some((issue) => issue.field === 'supportsReasoningEffort' && issue.severity === 'warning'));
 });
 
 test('默认强度不在支持列表时拒绝保存', () => {

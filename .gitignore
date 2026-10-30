@@ -1,5 +1,47 @@
+# 依赖
 node_modules/
+
+# 构建产物
 dist/
+out/
+*.tsbuildinfo
+
+# 打包产物
 *.vsix
-.DS_Store
+*.vsix.sig
+.vsce-cache/
+
+# 测试产物
 .vscode-test/
+coverage/
+.nyc_output/
+
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 本地环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 编辑器临时文件
+.idea/
+.history/
+*.swp
+*.swo
+*~
+
+# 临时文件
+tmp/
+.cache/
+*.tmp
+
