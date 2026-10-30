@@ -1,0 +1,250 @@
+{
+  "name": "copilot-model-configurator",
+  "displayName": "Copilot Model Configurator",
+  "description": "可视化添加和管理 GitHub Copilot 第三方模型",
+  "version": "0.2.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "copilot",
+    "byok",
+    "models",
+    "openai"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:copilotModels.open",
+    "onCommand:copilotModels.add",
+    "onView:copilotModels.sidebar"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "copilotModels.open",
+        "title": "打开模型管理面板",
+        "category": "Copilot 模型",
+        "icon": "$(book)"
+      },
+      {
+        "command": "copilotModels.add",
+        "title": "添加第三方模型",
+        "category": "Copilot 模型",
+        "icon": "$(add)"
+      },
+      {
+        "command": "copilotModels.openModel",
+        "title": "编辑模型",
+        "category": "Copilot 模型",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "copilotModels.copyModel",
+        "title": "复制模型",
+        "category": "Copilot 模型",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "copilotModels.deleteModel",
+        "title": "删除模型",
+        "category": "Copilot 模型",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "copilotModels.openGroup",
+        "title": "打开分组设置",
+        "category": "Copilot 模型",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "copilotModels.refresh",
+        "title": "刷新模型配置",
+        "category": "Copilot 模型",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "copilotModels.export",
+        "title": "导出模型配置（不含密钥）",
+        "category": "Copilot 模型"
+      },
+      {
+        "command": "copilotModels.importLegacy",
+        "title": "导入旧版设置中的模型",
+        "category": "Copilot 模型"
+      },
+      {
+        "command": "copilotModels.openConfigFile",
+        "title": "打开 chatLanguageModels.json",
+        "category": "Copilot 模型"
+      },
+      {
+        "command": "copilotModels.openBackups",
+        "title": "打开配置备份目录",
+        "category": "Copilot 模型"
+      },
+      {
+        "command": "copilotModels.openLegacySetting",
+        "title": "打开旧版模型设置",
+        "category": "Copilot 模型"
+      },
+      {
+        "command": "copilotModels.openDashboard",
+        "title": "打开 Copilot 官方模型管理",
+        "category": "Copilot 模型"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "copilotModels",
+          "title": "Copilot 模型",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "copilotModels": [
+        {
+          "id": "copilotModels.sidebar",
+          "name": "第三方模型",
+          "icon": "media/icon.svg",
+          "contextualTitle": "Copilot 模型管理"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "copilotModels.sidebar",
+        "contents": "还没有第三方模型配置。\n[添加模型](command:copilotModels.add)\n[打开管理面板](command:copilotModels.open)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "copilotModels.open",
+          "when": "view == copilotModels.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "copilotModels.add",
+          "when": "view == copilotModels.sidebar",
+          "group": "navigation@2"
+        },
+        {
+          "command": "copilotModels.refresh",
+          "when": "view == copilotModels.sidebar",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "copilotModels.openModel",
+          "when": "view == copilotModels.sidebar && viewItem == copilotModels.model",
+          "group": "inline@1"
+        },
+        {
+          "command": "copilotModels.copyModel",
+          "when": "view == copilotModels.sidebar && viewItem == copilotModels.model",
+          "group": "inline@2"
+        },
+        {
+          "command": "copilotModels.deleteModel",
+          "when": "view == copilotModels.sidebar && viewItem == copilotModels.model",
+          "group": "inline@3"
+        },
+        {
+          "command": "copilotModels.openGroup",
+          "when": "view == copilotModels.sidebar && viewItem == copilotModels.group",
+          "group": "inline@1"
+        },
+        {
+          "command": "copilotModels.importLegacy",
+          "when": "view == copilotModels.sidebar && viewItem == copilotModels.legacy",
+          "group": "inline@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "copilotModels.openModel",
+          "when": "false"
+        },
+        {
+          "command": "copilotModels.copyModel",
+          "when": "false"
+        },
+        {
+          "command": "copilotModels.deleteModel",
+          "when": "false"
+        },
+        {
+          "command": "copilotModels.openGroup",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Copilot 模型管理",
+      "properties": {
+        "copilotModelManager.connectionTimeoutSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 120,
+          "description": "连接测试和模型发现请求的超时时间（秒）。"
+        },
+        "copilotModelManager.backupCount": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "保留的配置备份数量，0 表示不备份。"
+        },
+        "copilotModelManager.confirmBeforeDelete": {
+          "type": "boolean",
+          "default": true,
+          "description": "删除模型或分组前显示确认对话框。"
+        },
+        "copilotModelManager.confirmTestRequest": {
+          "type": "boolean",
+          "default": true,
+          "description": "连接测试前提示会向第三方发送一条测试消息，可能产生少量费用。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check": "tsc -p .",
+    "test": "node --test test/unit/*.test.ts",
+    "test:unit": "node --test test/unit/*.test.ts",
+    "vscode:prepublish": "npm run build",
+    "test:integration": "node test/integration/runTest.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "files": [
+    "dist",
+    "media",
+    "package.json",
+    "README.md",
+    "DEVELOPMENT.md",
+    "IMPLEMENTATION.md"
+  ]
+}
