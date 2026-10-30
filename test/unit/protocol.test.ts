@@ -119,6 +119,52 @@ test('更新分组密钥必须携带快照标识', () => {
   }
 });
 
+test('分组设置请求被解析并规范化', () => {
+  const parsed = parseWebviewRequest({
+    type: 'group/save',
+    requestId: 'r-8',
+    payload: {
+      group: { vendor: 'customendpoint', groupName: 'G' },
+      expectedFingerprint: 'f'.repeat(64),
+      baseUrl: 'https://api.example.com/v1',
+      apiType: 'responses',
+      allowInsecureHttp: true,
+    },
+  });
+  assert.equal(isRequestFailure(parsed), false);
+  if (!isRequestFailure(parsed) && parsed.type === 'group/save') {
+    assert.equal(parsed.payload.baseUrl, 'https://api.example.com/v1');
+    assert.equal(parsed.payload.apiType, 'responses');
+    assert.equal(parsed.payload.allowInsecureHttp, true);
+  }
+});
+
+test('分组设置缺少地址或类型时被拒绝', () => {
+  const missingUrl = parseWebviewRequest({
+    type: 'group/save',
+    requestId: 'r-9',
+    payload: {
+      group: { vendor: 'customendpoint', groupName: 'G' },
+      expectedFingerprint: 'f'.repeat(64),
+      baseUrl: '  ',
+      apiType: 'responses',
+    },
+  });
+  assert.equal(isRequestFailure(missingUrl), true);
+
+  const badType = parseWebviewRequest({
+    type: 'group/save',
+    requestId: 'r-10',
+    payload: {
+      group: { vendor: 'customendpoint', groupName: 'G' },
+      expectedFingerprint: 'f'.repeat(64),
+      baseUrl: 'https://api.example.com/v1',
+      apiType: 'grpc',
+    },
+  });
+  assert.equal(isRequestFailure(badType), true);
+});
+
 test('请求账本拒绝重复标识', () => {
   const ledger = new RequestLedger();
   assert.equal(ledger.accept('a'), true);

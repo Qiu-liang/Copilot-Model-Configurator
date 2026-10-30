@@ -120,9 +120,35 @@ test('开启思考但没有强度时写入原生 thinking', () => {
   assert.equal('supportsReasoningEffort' in next, false);
 });
 
+test('模型未声明 apiType 时沿用分组类型', () => {
+  const model = parseRawModel({ id: 'm', name: 'M', url: 'https://x.test' }, 'customendpoint', 'G', {
+    groupApiType: 'responses',
+  });
+  assert.equal(model?.apiType, 'responses');
+});
+
 test('customoai 不会写入 apiType', () => {
   const next = applyDraftToRaw(validDraft({ vendor: 'customoai', apiType: 'responses' }), { id: 'm', apiType: 'responses' }, CAPS);
   assert.equal('apiType' in next, false);
+});
+
+test('模型级 url 与 apiType 由分组统一管理，保存时不再写入', () => {
+  const existing = { id: 'm', url: 'https://x.test/v1/chat/completions', apiType: 'responses' };
+  const next = applyDraftToRaw(validDraft({ id: 'm', url: 'https://draft.test/v1/responses', apiType: 'responses' }), existing, CAPS);
+  assert.equal(next['url'], 'https://x.test/v1/chat/completions', '地址应由分组接口重写，而不是覆盖成表单值');
+  assert.equal('apiType' in next, false);
+});
+
+test('分组统一接口时不再要求模型填写地址', () => {
+  const issues = validateDraft(validDraft({ url: '' }), {
+    siblingIds: [],
+    existingGroupNames: ['G'],
+    capabilities: CAPS,
+    groupExists: true,
+    groupHasCredential: true,
+    groupEndpoint: { baseUrl: 'https://x.test/v1', apiType: 'chat-completions' },
+  });
+  assert.equal(hasErrors(issues), false);
 });
 
 test('capabilities 关闭时不写 reasoningEffortFormat', () => {

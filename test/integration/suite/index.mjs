@@ -260,7 +260,47 @@ export async function run() {
     /未通过校验/,
   );
 
-  // 11) 清除分组凭据引用，其余模型保留。
+  // 11) 分组统一接口：写入 baseUrl/apiType，重写全部模型地址并保留凭据引用。
+  const beforeGroupSettings = await service.reload();
+  await service.saveGroupSettings(
+    { vendor: 'customendpoint', groupName: 'ProbeGroup' },
+    'https://group.example.com/v1/chat/completions',
+    'responses',
+    false,
+    beforeGroupSettings.fingerprint,
+  );
+  const afterGroupSettings = read();
+  const probeWithEndpoint = afterGroupSettings.find((group) => group.name === 'ProbeGroup');
+  assert.equal(probeWithEndpoint.baseUrl, 'https://group.example.com/v1');
+  assert.equal(probeWithEndpoint.apiType, 'responses');
+  assert.equal(probeWithEndpoint.apiKey, '${input:chat.lm.secret.old}', '分组设置不应改动凭据引用');
+  for (const model of probeWithEndpoint.models) {
+    assert.equal(model.url, 'https://group.example.com/v1/responses');
+    assert.equal('apiType' in model, false, '模型级 apiType 应被移除');
+  }
+
+  // 12) 模型保存沿用分组接口，忽略表单里的地址与类型。
+  const beforeGroupModel = await service.reload();
+  const managedGroup = beforeGroupModel.groups.find((group) => group.name === 'ProbeGroup');
+  const managedModel = managedGroup.models.find((model) => model.id === 'existing');
+  assert.ok(managedModel);
+  await service.saveDraft(
+    {
+      ...managedModel,
+      name: 'Group Managed',
+      url: 'https://ignored.example.com/v1/chat/completions',
+      apiType: 'chat-completions',
+    },
+    beforeGroupModel.fingerprint,
+    { vendor: 'customendpoint', groupName: 'ProbeGroup', id: managedModel.id },
+  );
+  const afterManagedSave = read().find((group) => group.name === 'ProbeGroup');
+  const savedManaged = afterManagedSave.models.find((model) => model.id === managedModel.id);
+  assert.equal(savedManaged.name, 'Group Managed');
+  assert.equal(savedManaged.url, 'https://group.example.com/v1/responses');
+  assert.equal('apiType' in savedManaged, false);
+
+  // 13) 清除分组凭据引用，其余模型保留。
   const beforeClear = await service.reload();
   await service.clearApiKey('customendpoint', 'ProbeGroup', beforeClear.fingerprint);
   const afterClear = read();
@@ -268,7 +308,7 @@ export async function run() {
   assert.equal('apiKey' in probeAfterClear, false);
   assert.ok(probeAfterClear.models.length > 0, '清除凭据不应删除模型');
 
-  // 12) 无认证分组中的模型按“无需认证”再次保存，不被要求补密钥。
+  // 14) 无认证分组中的模型按“无需认证”再次保存，不被要求补密钥。
   const noAuthSnapshot = await service.reload();
   const noAuthGroup = noAuthSnapshot.groups.find((group) => group.name === 'ProbeGroup');
   assert.ok(noAuthGroup);
@@ -288,13 +328,13 @@ export async function run() {
   assert.equal(noAuthSaved.credentialMode, 'none');
   assert.equal('apiKey' in read().find((group) => group.name === 'ProbeGroup'), false);
 
-  // 13) 更新分组密钥与其它写入路径一致：过期快照必须拒绝，不覆盖外部修改。
+  // 15) 更新分组密钥与其它写入路径一致：过期快照必须拒绝，不覆盖外部修改。
   await assert.rejects(
     () => service.updateApiKey('customendpoint', 'ProbeGroup', 'stale-key-123', snapshot.fingerprint),
     (error) => /外部修改/.test(String(error.message)),
   );
 
-  // 14) 快照最新但宿主缺少 Copilot 时，密钥写入失败且不落盘。
+  // 16) 快照最新但宿主缺少 Copilot 时，密钥写入失败且不落盘。
   const keySnapshot = await service.reload();
   const beforeKeyUpdateText = fs.readFileSync(configPath, 'utf8');
   await assert.rejects(

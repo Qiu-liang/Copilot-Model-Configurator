@@ -37,6 +37,7 @@ const BUSY_MESSAGES: Partial<Record<RequestType, string>> = {
   'legacy/import': '正在导入旧版设置…',
   'group/promptApiKey': '正在保存 API Key…',
   'group/clearApiKey': '正在清除分组凭据…',
+  'group/save': '正在保存分组设置…',
 };
 
 const PUSH_STATE_ON_ERROR: readonly ErrorCode[] = ['conflict', 'credential', 'unavailable'];
@@ -136,6 +137,12 @@ export class MessageController {
           await this.service.deleteGroup(group.vendor, group.groupName, expectedFingerprint);
           await this.host.pushState();
         }
+        return {};
+      }
+      case 'group/save': {
+        const { group, baseUrl, apiType, allowInsecureHttp, expectedFingerprint } = request.payload;
+        await this.service.saveGroupSettings(group, baseUrl, apiType, allowInsecureHttp, expectedFingerprint);
+        await this.host.pushState();
         return {};
       }
       case 'group/promptApiKey': {

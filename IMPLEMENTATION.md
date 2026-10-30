@@ -17,8 +17,10 @@
 ### 模型管理
 
 - 新增、编辑、复制、删除模型；删除最后一个模型时保留空分组与凭据，避免隐式删除凭据。
-- 按连接分组管理；分组设置页支持新增模型、更新 API Key、清除凭据引用、删除分组、打开 JSON 配置。
-- 表单字段：提供方、连接分组（已有/新建）、模型 ID、显示名称、API 地址、API 类型、认证方式、API Key、总上下文窗口、最大输入/输出 Tokens、工具调用、视觉、流式、思考能力、支持强度、默认强度、强度参数格式、不安全 http 确认。
+- 分组是接口配置单位：分组设置页统一维护 API 地址（`baseUrl`）、API 类型（`apiType`）、API Key，并可新增模型、清除凭据引用、删除分组、打开 JSON 配置。
+- 模型表单只保留模型自身字段（ID、显示名称、上下文、能力、思考强度）；已有分组的接口以只读方式展示并提供“打开分组设置”。新建分组时在同一次保存中填写分组地址/类型/Key。
+- 保存模型时按分组 `baseUrl + apiType` 派生 `url` 并删除模型级 `apiType`；保存分组设置时批量重写该分组全部模型地址。
+- 表单字段：提供方、连接分组（已有/新建）、模型 ID、显示名称、总上下文窗口、最大输入/输出 Tokens、工具调用、视觉、流式、思考能力、支持强度、默认强度、强度参数格式；新建分组额外包含分组 API 地址/类型/Key 与不安全 http 确认。
 - 模型 ID 与显示名称在用户未手动修改名称时自动同步；总窗口/输出变化时自动换算输入，手动编辑输入后停止自动跟随，可一键恢复自动换算。
 - 思考开启状态由 `thinking` 或非空 `supportsReasoningEffort` 任一存在推导（二者互不覆盖）；关闭时清空强度字段；默认强度必须属于支持列表；目标版本不支持默认强度时只给出警告并提示到模型选择器设置。开启但未选强度时只写原生 `thinking`，并以警告提示不会显示强度选择器。
 - 高级设置包含即将写入的模型 JSON 预览（不含密钥）、分组凭据入口、配置/备份/旧设置入口。
@@ -26,11 +28,12 @@
 ### 保存、导入与导出
 
 - 原子写入（临时文件 + rename），写入前备份，备份数量可配置。
+- 分组 `baseUrl` 是面板私有字段：凭据重建前从 migrate payload 剔除，写入成功后回读补回，避免官方命令重建分组时丢失。
 - 写入前比对配置指纹；外部修改导致冲突时拒绝覆盖，面板提示使用最新快照继续或刷新。
 - 合并时只修改目标分组和目标模型，保留同组其他模型、其他分组、其他提供方与未知字段。
 - 导入为两步：`config/import` 只解析并校验，返回分组预览、冲突与错误；用户确认后 `config/importApply` 才写入。
-- 导入清洗分组级与模型级 `apiKey`；覆盖同名分组时保留原有凭据引用与 `settings`。
-- 导出使用字段白名单，剔除密钥、`settings` 和未知字段；支持预览、复制到剪贴板、保存到文件。
+- 导入清洗分组级与模型级 `apiKey`；覆盖同名分组时保留原有凭据引用、`settings` 与分组 `baseUrl`/`apiType`。
+- 导出使用字段白名单，剔除密钥、`settings` 和未知字段，保留分组 `baseUrl`/`apiType`；支持预览、复制到剪贴板、保存到文件。
 - 旧版 `github.copilot.chat.customOAIModels` 只读加载，支持导入到面板，不写旧设置、不自动删除旧设置。
 
 ### 连接测试
@@ -138,6 +141,7 @@ interface ExtensionResponse {
 | `config/save` | 校验、合并、写入、回读 |
 | `config/delete` | 删除模型并回读 |
 | `config/deleteGroup` | 删除分组并回读 |
+| `group/save` | 保存分组统一接口（baseUrl/apiType）并批量重写模型地址 |
 | `group/promptApiKey` | 用 VS Code 输入框收集密钥并重建分组 |
 | `group/clearApiKey` | 清除分组凭据引用（单独确认） |
 | `connection/test` / `connection/cancel` | 受限测试与取消 |
@@ -173,6 +177,7 @@ interface ExtensionResponse {
 | [src/adapters/CopilotConfigAdapter.ts](./src/adapters/CopilotConfigAdapter.ts) | 唯一 Copilot 读写边界与能力汇总 |
 | [src/adapters/CurrentGroupAdapter.ts](./src/adapters/CurrentGroupAdapter.ts) | 原子写入、备份、凭据重建命令 |
 | [src/models/draft.ts](./src/models/draft.ts) | 草稿映射、校验、URL 推导、复制草稿 |
+| [src/models/groupEndpoint.ts](./src/models/groupEndpoint.ts) | 分组接口归一化、推导、批量重写与校验 |
 | [src/models/importExport.ts](./src/models/importExport.ts) | 导入清洗、预览、合并、旧版转换 |
 | [src/services/ConnectionTester.ts](./src/services/ConnectionTester.ts) | 最小请求、超时、取消、错误分类与脱敏 |
 
@@ -180,7 +185,7 @@ interface ExtensionResponse {
 
 ```bash
 npm run check              # TypeScript 类型检查
-npm test                   # 112 项单元测试
+npm test                   # 133 项单元测试
 npm run build              # 构建 dist/extension.js、dist/webview.js 与 Webview 资源
 npm run test:integration   # 真实 VS Code 集成测试（使用本地安装的 VS Code）
 ```
@@ -198,6 +203,8 @@ npm run test:integration   # 真实 VS Code 集成测试（使用本地安装的
 - 导入预览不写盘、接受单个分组对象；
 - 无效导入在后端再次校验并拒绝；
 - 清除分组凭据引用但保留模型；
+- 分组统一接口：写入 baseUrl/apiType、重写全部模型 url、移除模型级 apiType、保留凭据引用；
+- 模型保存沿用分组接口，忽略表单地址；
 - 无认证分组中的模型再次保存不需要补密钥，且仍解析为无需认证；
 - 缺少 Copilot 提供方时拒绝保存密钥，且不留下半成品配置。
 

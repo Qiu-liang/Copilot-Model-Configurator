@@ -142,7 +142,7 @@ export function parseRawModel(
   raw: unknown,
   vendor: VendorId,
   groupName: string,
-  options: { groupHasCredential?: boolean } = {},
+  options: { groupHasCredential?: boolean; groupApiType?: ApiType } = {},
 ): ModelRecord | undefined {
   if (!isRecord(raw)) {
     return undefined;
@@ -158,7 +158,9 @@ export function parseRawModel(
   const maxInputTokens =
     asPositiveInt(raw['maxInputTokens']) ??
     Math.max(1, (contextWindow || DEFAULT_MODEL_VALUES.contextWindow) - maxOutputTokens);
-  const apiType = isApiType(raw['apiType']) ? raw['apiType'] : DEFAULT_API_TYPE;
+  const apiType = isApiType(raw['apiType'])
+    ? raw['apiType']
+    : (options.groupApiType ?? DEFAULT_API_TYPE);
   const supportsReasoningEffort = normalizeEffortLevels(raw['supportsReasoningEffort']);
   // `thinking` 与 `supportsReasoningEffort` 是相互独立的声明：Copilot 只按强度列表
   // 转发强度并在档位多于一个时显示选择器，因此任一存在都视为开启了思考。
@@ -267,7 +269,6 @@ export function applyDraftToRaw(
 
   next['id'] = draft.id.trim();
   next['name'] = draft.name.trim();
-  next['url'] = draft.url.trim();
   next['toolCalling'] = draft.toolCalling;
   next['vision'] = draft.vision;
   next['maxInputTokens'] = draft.maxInputTokens;
@@ -276,12 +277,8 @@ export function applyDraftToRaw(
   next['streaming'] = draft.streaming;
   // 模型对象不应携带明文密钥；历史遗留字段在保存时清除。
   delete next['apiKey'];
-
-  if (capabilities.supportsModelApiType && draft.vendor === 'customendpoint') {
-    next['apiType'] = draft.apiType;
-  } else {
-    delete next['apiType'];
-  }
+  // 地址与 API 类型由分组统一管理，模型级不再写入。
+  delete next['apiType'];
 
   const efforts = normalizeEffortLevels(draft.supportsReasoningEffort);
   if (draft.thinking) {
@@ -331,6 +328,8 @@ export interface ValidationContext {
   groupExists?: boolean;
   /** 目标分组是否已有可用凭据（只表示存在，不读取密钥本身）。 */
   groupHasCredential?: boolean;
+  /** 分组已统一管理接口时提供；此时不再校验模型自身的地址字段。 */
+  groupEndpoint?: { baseUrl: string; apiType: ApiType };
 }
 
 export function validateDraft(draft: ModelDraft, context: ValidationContext): ValidationIssue[] {
@@ -356,7 +355,9 @@ export function validateDraft(draft: ModelDraft, context: ValidationContext): Va
   }
 
   const url = draft.url.trim();
-  if (!url) {
+  if (context.groupEndpoint) {
+    // 地址由分组统一管理，模型保存时由服务层按分组接口重写。
+  } else if (!url) {
     issues.push({ field: 'url', message: '请填写 API 地址。' });
   } else {
     let parsed: URL | undefined;
@@ -463,11 +464,13 @@ export function validateDraft(draft: ModelDraft, context: ValidationContext): Va
     }
   }
 
+  const effectiveApiType = context.groupEndpoint?.apiType ?? draft.apiType;
+  const effectiveUrl = context.groupEndpoint?.baseUrl ?? draft.url;
   if (
     draft.vendor === 'customoai' &&
     draft.thinking &&
-    draft.apiType !== 'chat-completions' &&
-    !hasExplicitApiPath(draft.url)
+    effectiveApiType !== 'chat-completions' &&
+    !hasExplicitApiPath(effectiveUrl)
   ) {
     issues.push({
       field: 'url',

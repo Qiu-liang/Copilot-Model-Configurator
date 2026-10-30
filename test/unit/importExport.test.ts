@@ -104,12 +104,14 @@ test('导入预览明确报告不支持的提供方', () => {
   );
 });
 
-test('合并导入保留原凭据与 settings，并替换模型列表', () => {
+test('合并导入保留原凭据、接口与 settings，并替换模型列表', () => {
   const existing: RawGroup[] = [
     {
       name: 'G',
       vendor: 'customendpoint',
       apiKey: '${input:chat.lm.secret.old}',
+      baseUrl: 'https://api.example.com/v1',
+      apiType: 'responses',
       settings: { model: { thinkingEffort: 'high' } },
       models: [{ id: 'old' }],
     },
@@ -122,6 +124,8 @@ test('合并导入保留原凭据与 settings，并替换模型列表', () => {
   const group = findGroup(groups, 'customendpoint', 'G');
   assert.ok(group);
   assert.equal(group?.['apiKey'], '${input:chat.lm.secret.old}');
+  assert.equal(group?.['baseUrl'], 'https://api.example.com/v1');
+  assert.equal(group?.['apiType'], 'responses');
   assert.deepEqual(group?.['settings'], { model: { thinkingEffort: 'high' } });
   assert.deepEqual(groupModels(group!).map((model) => model['id']), ['new']);
 });
@@ -163,6 +167,8 @@ test('旧版模型转换为分组时剥离密钥并去重', () => {
   );
   assert.equal(result.strippedCredentials, true);
   assert.equal(result.group.vendor, 'customendpoint');
+  assert.equal(result.group['baseUrl'], 'https://x.test');
+  assert.equal(result.group['apiType'], 'chat-completions');
   const models = groupModels(result.group);
   assert.deepEqual(models.map((model) => model['id']), ['a', 'b']);
   assert.equal(models.some((model) => 'apiKey' in model), false);

@@ -1,4 +1,5 @@
 import type {
+  ApiType,
   ConfigSnapshot,
   ConnectionTestResult,
   GroupRef,
@@ -60,6 +61,13 @@ export interface RequestPayloads {
   'connection/cancel': Record<string, never>;
   'group/promptApiKey': { group: GroupRef; expectedFingerprint: string };
   'group/clearApiKey': { group: GroupRef; expectedFingerprint: string };
+  'group/save': {
+    group: GroupRef;
+    expectedFingerprint: string;
+    baseUrl: string;
+    apiType: ApiType;
+    allowInsecureHttp: boolean;
+  };
   'panel/openOfficial': Record<string, never>;
   'panel/openConfigFile': Record<string, never>;
   'panel/openBackups': Record<string, never>;
@@ -93,6 +101,7 @@ const REQUEST_TYPES: readonly RequestType[] = [
   'connection/cancel',
   'group/promptApiKey',
   'group/clearApiKey',
+  'group/save',
   'panel/openOfficial',
   'panel/openConfigFile',
   'panel/openBackups',
@@ -313,6 +322,26 @@ export function parseWebviewRequest(value: unknown): WebviewRequest | ParsedRequ
         return { requestId, error: invalid('分组操作参数无效。') };
       }
       return { type, requestId, payload: { group, expectedFingerprint } };
+    }
+    case 'group/save': {
+      const group = parseGroupRef(payload['group']);
+      const expectedFingerprint = parseFingerprint(payload['expectedFingerprint']);
+      const baseUrl = text(payload['baseUrl'], 4_000);
+      const apiType = payload['apiType'];
+      if (!group || !expectedFingerprint || !baseUrl || !isApiType(apiType)) {
+        return { requestId, error: invalid('分组设置参数无效。') };
+      }
+      return {
+        type,
+        requestId,
+        payload: {
+          group,
+          expectedFingerprint,
+          baseUrl,
+          apiType,
+          allowInsecureHttp: bool(payload['allowInsecureHttp']) ?? false,
+        },
+      };
     }
     case 'config/export':
       return { type, requestId, payload: { copy: bool(payload['copy']) ?? false } };

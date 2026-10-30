@@ -59,6 +59,8 @@ VS Code / Copilot 的 BYOK 配置仍在演进。截至本文核对时：
   {
     "vendor": "customoai",
     "name": "My Provider",
+    "baseUrl": "https://api.example.com/v1",
+    "apiType": "chat-completions",
     "models": [
       {
         "id": "provider-model-id",
@@ -80,15 +82,29 @@ VS Code / Copilot 的 BYOK 配置仍在演进。截至本文核对时：
 ]
 ```
 
-上面是字段映射示例，不代表稳定公开 Schema。`defaultReasoningEffort` 虽存在于 Copilot 当前通用 BYOK 能力模型中，但在 CustomOAI 的显式配置类型中未完整声明；实现时必须通过目标版本实测，不支持时仅展示“在模型选择器中设置”。
+上面是字段映射示例，不代表稳定公开 Schema。`baseUrl` 是面板维护的分组级字段，Copilot 会忽略；模型 `url` 仍由面板按 `baseUrl + apiType` 派生后写入，因为 Copilot 要求每个模型都有完整地址。`defaultReasoningEffort` 虽存在于 Copilot 当前通用 BYOK 能力模型中，但在 CustomOAI 的显式配置类型中未完整声明；实现时必须通过目标版本实测，不支持时仅展示“在模型选择器中设置”。
 
-### 3.3 模型字段映射
+### 3.3 分组接口（baseUrl / apiType）
+
+| 分组字段 | 类型 | 规则 |
+| --- | --- | --- |
+| `baseUrl` | `string` | 分组统一接口基地址；面板私有字段，Copilot 忽略；旧配置由模型 URL 推导 |
+| `apiType` | 枚举 | 分组统一请求格式；模型级 `apiType` 在保存时移除 |
+| `apiKey` | `string` | VS Code 密钥引用；由分组设置写入 |
+
+- 一个分组对应一套接口：`baseUrl` + `apiType`（+ 分组 `apiKey`）。模型不再单独填写地址和类型。
+- `baseUrl` 归一化时去掉末尾 `/` 与 `/chat/completions`、`/responses`、`/messages`；保存分组时按 `apiType` 重新拼接每个模型的 `url`，并删除模型级 `apiType`。
+- 旧配置没有 `baseUrl` 时，从首个模型的 `url` 推导基地址、从模型级 `apiType` 或 URL 路径推导类型；下次保存分组或模型时写回分组。
+- 修改分组地址会把该分组全部模型的地址统一重写；需要不同地址时请拆分分组。
+- 官方 `lm.migrateLanguageModelsProviderGroup` 重建分组时会丢掉私有字段，因此凭据写入后由适配器补回 `baseUrl`。
+
+### 3.4 模型字段映射
 
 | 面板字段 | 配置字段 | 类型 | 规则 |
 | --- | --- | --- | --- |
 | 模型 ID | `id` | `string` | 必填；同一分组内唯一；原样发送给服务方 |
 | 显示名称 | `name` | `string` | 必填；用于模型选择器展示 |
-| API 地址 | `url` | `string` | 必填；优先填写完整端点 |
+| API 地址 | `url` | `string` | 由分组 `baseUrl + apiType` 派生写入；模型表单不再单独填写 |
 | 总上下文窗口 | `contextWindow` | `number` | 正整数；输入与输出的总窗口 |
 | 最大输入 Tokens | `maxInputTokens` | `number` | 正整数；小于等于总窗口 |
 | 最大输出 Tokens | `maxOutputTokens` | `number` | 正整数；输入与输出之和等于总窗口 |
@@ -108,7 +124,7 @@ $$
 
 MVP 使用显式三个数值，并在总窗口变化时给出联动选项；不要把自动换算后的值与服务商标注的独立输入限制混为一谈。若服务商分别给出输入限制和总窗口且二者不一致，以服务商文档为准，并允许高级编辑。
 
-### 3.4 API 地址规则
+### 3.5 API 地址规则
 
 当前 Copilot 对 CustomOAI 地址的主要处理规则：
 
@@ -116,9 +132,9 @@ MVP 使用显式三个数值，并在总窗口变化时给出联动选项；不�
 - 以 `/v1` 等版本路径结尾：追加 `/chat/completions`。
 - 其他基础地址：追加 `/v1/chat/completions`。
 
-为避免不同版本推导差异，表单默认引导用户填写完整端点，并在旁边实时显示“Copilot 当前推导的请求地址”。MVP 不自行重写用户保存的 URL。
+面板的分组地址使用同一套推导：`baseUrl` 归一化为不含 API 路径的基地址，保存时按分组 `apiType` 调用 `resolveRequestUrl` 生成每个模型的 `url`，并在分组设置里实时显示示例请求地址。模型表单不再提供逐模型地址覆盖。
 
-### 3.5 思考强度的语义
+### 3.6 思考强度的语义
 
 `thinking` 与 `supportsReasoningEffort` 是 Copilot 相互独立的两个声明：前者声明原生思考能力（Messages 预算等），后者决定 Copilot 是否转发强度，以及是否在模型选择器里显示 `Thinking Effort` 选择器（档位多于一个时才显示，单档位仍会转发强度值）。
 
@@ -137,7 +153,7 @@ MVP 使用显式三个数值，并在总窗口变化时给出联动选项；不�
 - 未声明 `supportsReasoningEffort` 时，Copilot 不应转发面板中随意填写的强度。
 - 当前 CustomOAI 源码未显式转发 `defaultReasoningEffort` 到最终端点能力对象；故“默认强度”列为兼容性增强项。若目标版本不生效，界面必须提示用户到模型选择器中调整，而不是保存一个无效选项。
 
-### 3.6 API Key 与分组
+### 3.7 API Key 与分组
 
 - 同组模型共享分组凭据；不同 API Key 或服务账号应使用不同分组。
 - 新增时可输入 API Key；本地服务可无 Key，但需用户明确选择“无需认证”。
@@ -237,13 +253,19 @@ flowchart TB
 
 ### 5.2 表单分区与默认值
 
+**分组设置**
+
+- API 地址（Base URL）：分组必填，保存时归一化并按 API 类型派生全部模型地址。
+- API 类型：Chat Completions / Responses / Messages，分组唯一来源。
+- 认证方式：使用 API Key / 无需认证；API Key 只写入 VS Code 密钥存储，面板不回显。
+- 保存分组设置会重写该分组全部模型的 `url` 并移除模型级 `apiType`。
+
 **基础信息**
 
-- 连接分组：选择已有分组或新建分组。
+- 连接分组：选择已有分组或新建分组；已有分组时接口信息只读，修改入口在分组设置。
 - 模型 ID：无默认值，不以显示名称自动覆盖已编辑的 ID。
 - 显示名称：默认可与 ID 相同。
-- API 地址：必填，URL 校验在失焦时进行。
-- 认证方式：API Key / 无认证；不预填已有密钥。
+- 新建分组时额外填写分组 API 地址、API 类型与认证方式。
 
 **上下文与能力**
 

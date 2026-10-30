@@ -153,6 +153,23 @@ test('导出保留能力字段', () => {
   assert.equal(model?.['thinking'], true);
 });
 
+test('导出保留分组接口字段且仍剔除 apiKey', () => {
+  const groups: RawGroup[] = [
+    {
+      name: 'Provider',
+      vendor: 'customendpoint',
+      baseUrl: 'https://api.example.com/v1',
+      apiType: 'responses',
+      apiKey: '${input:chat.lm.secret.abc}',
+      models: [],
+    },
+  ];
+  const [exported] = createSanitizedExport(groups);
+  assert.equal(exported?.['baseUrl'], 'https://api.example.com/v1');
+  assert.equal(exported?.['apiType'], 'responses');
+  assert.equal('apiKey' in (exported as object), false);
+});
+
 test('旧版设置读取兼容两种 id 来源', () => {
   const legacy = readLegacyModels({
     a: { id: 'a', name: 'A', url: 'https://x.test' },

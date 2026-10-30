@@ -7,6 +7,7 @@ import {
   type RawGroup,
 } from './configDocument.ts';
 import { cloneDraft, hasErrors, parseRawModel, validateDraft, type ProviderCapabilities } from './draft.ts';
+import { deriveBaseUrl, readGroupApiType } from './groupEndpoint.ts';
 import type { ImportPreview, ImportPreviewGroup, ValidationIssue, VendorId } from './modelConfig.ts';
 import { isVendorId } from './draft.ts';
 
@@ -161,6 +162,13 @@ export function mergeImportedGroups(
       if (previous?.['settings'] !== undefined && imported['settings'] === undefined) {
         imported['settings'] = previous['settings'];
       }
+      // 旧导出没有分组接口字段时，沿用原分组的统一配置。
+      if (previous?.['baseUrl'] !== undefined && imported['baseUrl'] === undefined) {
+        imported['baseUrl'] = previous['baseUrl'];
+      }
+      if (previous?.['apiType'] !== undefined && imported['apiType'] === undefined) {
+        imported['apiType'] = previous['apiType'];
+      }
       next[index] = imported;
     } else {
       next.push(imported);
@@ -197,8 +205,17 @@ export function legacyModelsToGroup(
     raw['id'] = id;
     result.push(raw);
   }
+  const group: RawGroup = { name: groupName, vendor, models: result };
+  const baseUrl = deriveBaseUrl(result);
+  if (baseUrl) {
+    group['baseUrl'] = baseUrl;
+  }
+  const apiType = readGroupApiType(group);
+  if (apiType) {
+    group['apiType'] = apiType;
+  }
   return {
-    group: { name: groupName, vendor, models: result },
+    group,
     strippedCredentials,
   };
 }

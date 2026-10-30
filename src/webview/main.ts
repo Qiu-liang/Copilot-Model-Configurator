@@ -1,4 +1,5 @@
 import type {
+  ApiType,
   ConfigSnapshot,
   ConnectionTestResult,
   GroupRef,
@@ -26,6 +27,11 @@ import {
   validateDraft,
   type ProviderCapabilities,
 } from '../models/draft.ts';
+import {
+  applyGroupEndpointToModel,
+  normalizeBaseUrl,
+  validateGroupEndpoint,
+} from '../models/groupEndpoint.ts';
 import type {
   ExtensionMessage,
   RequestError,
@@ -79,10 +85,22 @@ type DialogState =
   | { kind: 'export'; json: string; busy: boolean }
   | { kind: 'discard'; message: string; onConfirm: () => void };
 
+interface GroupSettingsState {
+  vendor: VendorId;
+  groupName: string;
+  baseUrl: string;
+  apiType: ApiType;
+  allowInsecureHttp: boolean;
+  dirty: boolean;
+  saving: boolean;
+  error?: string;
+}
+
 interface AppState {
   snapshot?: ConfigSnapshot;
   selection: Selection;
   form?: FormState;
+  groupSettings?: GroupSettingsState;
   busy: boolean;
   busyMessage?: string;
   lastError?: string;
@@ -106,6 +124,7 @@ type PendingPurpose =
   | 'legacy'
   | 'groupKey'
   | 'clearKey'
+  | 'groupSave'
   | 'dirty'
   | 'open';
 
@@ -315,6 +334,17 @@ function handleResponse(message: Extract<ExtensionMessage, { type: 'response' }>
       render();
       break;
     }
+    case 'groupSave': {
+      if (state.groupSettings) {
+        state.groupSettings.saving = false;
+        state.groupSettings.dirty = false;
+        state.groupSettings.error = undefined;
+      }
+      syncGroupSettings(true);
+      showToast('info', '分组设置已保存，模型地址已按分组接口重写。');
+      render();
+      break;
+    }
     case 'groupKey':
       if (state.form && state.snapshot) {
         state.form.baseFingerprint = state.snapshot.fingerprint;
@@ -349,6 +379,13 @@ function handleResponse(message: Extract<ExtensionMessage, { type: 'response' }>
 
 function handleRequestError(error: RequestError, purpose: PendingPurpose | undefined): void {
   resetPendingUi(purpose);
+  if (purpose === 'groupSave' && state.groupSettings) {
+    state.groupSettings.saving = false;
+    state.groupSettings.error = error.message;
+    showToast('error', error.message, 6200);
+    render();
+    return;
+  }
   if (error.code === 'canceled') {
     showToast('info', error.message);
     render();
@@ -397,6 +434,9 @@ function resetPendingUi(purpose: PendingPurpose | undefined): void {
   if (purpose === 'test' && state.form) {
     state.form.testing = false;
   }
+  if (purpose === 'groupSave' && state.groupSettings) {
+    state.groupSettings.saving = false;
+  }
   if (
     purpose === 'import' ||
     purpose === 'importApply' ||
@@ -428,6 +468,9 @@ function applySnapshot(snapshot: ConfigSnapshot): void {
     if (!state.form) {
       state.selection = { kind: 'none' };
     }
+  }
+  if (state.selection.kind === 'group' && !state.form) {
+    syncGroupSettings();
   }
 
   const form = state.form;
@@ -501,6 +544,9 @@ function validateForm(form: FormState): ValidationIssue[] {
     capabilities: capabilitiesFor(form.draft.vendor),
     groupExists: Boolean(group),
     groupHasCredential: group?.hasApiKey ?? false,
+    groupEndpoint: group?.baseUrl
+      ? { baseUrl: group.baseUrl, apiType: group.apiType ?? 'chat-completions' }
+      : undefined,
   });
   if (form.mode !== 'edit' && form.groupMode === 'new' && form.draft.groupName.trim()) {
     const exists = (state.snapshot?.groups ?? []).some(
@@ -646,15 +692,57 @@ function startEdit(ref: ModelRef, skipGuard = false): void {
 
 function selectGroup(group: GroupRef): void {
   withDiscardGuard(() => {
-    if (!findGroup(group.vendor, group.groupName)) {
+    const found = findGroup(group.vendor, group.groupName);
+    if (!found) {
       showToast('error', '该分组已不存在，请刷新后重试。');
       return;
     }
     state.form = undefined;
     state.selection = { kind: 'group', group };
+    state.groupSettings = createGroupSettings(found);
     state.lastError = undefined;
     render();
   });
+}
+
+function createGroupSettings(group: ProviderGroup): GroupSettingsState {
+  return {
+    vendor: group.vendor,
+    groupName: group.name,
+    baseUrl: group.baseUrl ?? '',
+    apiType: group.apiType ?? 'chat-completions',
+    allowInsecureHttp: false,
+    dirty: false,
+    saving: false,
+  };
+}
+
+function currentGroup(): ProviderGroup | undefined {
+  if (state.selection.kind !== 'group') {
+    return undefined;
+  }
+  return findGroup(state.selection.group.vendor, state.selection.group.groupName);
+}
+
+function syncGroupSettings(force = false): void {
+  const group = currentGroup();
+  const settings = state.groupSettings;
+  if (!group) {
+    state.groupSettings = undefined;
+    return;
+  }
+  if (
+    !settings ||
+    settings.vendor !== group.vendor ||
+    settings.groupName !== group.name
+  ) {
+    state.groupSettings = createGroupSettings(group);
+    return;
+  }
+  if (force || (!settings.dirty && !settings.saving)) {
+    settings.baseUrl = group.baseUrl ?? '';
+    settings.apiType = group.apiType ?? 'chat-completions';
+  }
 }
 
 function selectModel(group: ProviderGroup, model: ModelRecord): void {
@@ -800,8 +888,9 @@ function testForm(): void {
     send('connection/cancel', {}, 'cancelTest');
     return;
   }
-  if (!form.draft.url.trim() || !form.draft.id.trim()) {
-    showToast('warn', '请先填写模型 ID 和 API 地址。');
+  const endpoint = effectiveEndpoint(form.draft);
+  if (!endpoint.url || !form.draft.id.trim()) {
+    showToast('warn', '请先填写模型 ID 和分组 API 地址。');
     return;
   }
   form.urlTouched = true;
@@ -818,13 +907,25 @@ function testForm(): void {
   send('connection/test', { draft: cleanDraft(form.draft) }, 'test');
 }
 
+/** 已有分组时地址与类型来自分组，新建/未配置分组时才用表单值。 */
+function effectiveEndpoint(draft: ModelDraft): { url: string; apiType: ApiType } {
+  const group = findGroup(draft.vendor, draft.groupName.trim());
+  if (group?.baseUrl) {
+    const apiType = group.apiType ?? 'chat-completions';
+    return { url: resolveRequestUrl(group.baseUrl, apiType), apiType };
+  }
+  return { url: draft.url.trim(), apiType: draft.apiType };
+}
+
 function cleanDraft(draft: ModelDraft): ModelDraft {
+  const endpoint = effectiveEndpoint(draft);
   return {
     ...draft,
     groupName: draft.groupName.trim(),
     id: draft.id.trim(),
     name: draft.name.trim(),
-    url: draft.url.trim(),
+    url: endpoint.url,
+    apiType: endpoint.apiType,
     supportsReasoningEffort: normalizeEffortLevels(draft.supportsReasoningEffort),
     apiKey: draft.apiKey?.trim() ? draft.apiKey.trim() : undefined,
     credentialMode: draft.credentialMode ?? 'apiKey',
@@ -1144,7 +1245,7 @@ function renderWelcome(): HTMLElement {
   if (groups.length === 0) {
     const empty = el('div', { class: 'empty' });
     empty.append(
-      el('p', {}, '填写模型 ID、接口地址和上下文长度即可创建第一个第三方模型。'),
+      el('p', {}, '先设置分组的 API 地址与类型，再填写模型 ID 和上下文长度即可创建第一个第三方模型。'),
       button('添加第一个模型', () => startCreate(), {
         class: 'primary',
         disabled: !snapshot?.writeEnabled,
@@ -1192,7 +1293,6 @@ function renderGroupPage(group: ProviderGroup): HTMLElement {
       class: 'primary',
       disabled: !state.snapshot?.writeEnabled,
     }),
-    button(group.hasApiKey ? '更新 API Key' : '设置 API Key', () => promptGroupKey(group)),
     button('打开 JSON 配置', () => send('panel/openConfigFile', {}, 'open'), { class: 'link' }),
   );
   head.append(actions);
@@ -1202,13 +1302,14 @@ function renderGroupPage(group: ProviderGroup): HTMLElement {
   credentialBadge.append(
     el('span', { class: 'badge' }, info?.label ?? group.vendor),
     el('span', { class: 'badge' + (group.hasApiKey ? ' on' : ' warn') }, group.hasApiKey ? '已保存凭据' : '无凭据'),
-    el('span', { class: 'badge' }, group.apiType ? apiTypeLabel(group.apiType) : '默认 API 类型'),
+    el('span', { class: 'badge' }, apiTypeLabel(group.apiType ?? 'chat-completions')),
   );
   wrapper.append(credentialBadge);
 
   if (state.lastError) {
     wrapper.append(renderTransientError(state.lastError));
   }
+  wrapper.append(renderGroupSettings(group));
   if (!group.hasApiKey) {
     wrapper.append(
       banner('warn', '缺少凭据', '这个分组尚未保存 API Key。需要认证的模型必须先设置 Key，否则请求会失败。'),
@@ -1218,7 +1319,7 @@ function renderGroupPage(group: ProviderGroup): HTMLElement {
     banner(
       'info',
       '分组是配置身份',
-      '同一分组的模型共享凭据。编辑模型时不能更换分组；如需迁移，请新建模型后删除旧条目。MVP 不提供分组重命名。',
+      '同一分组的模型共享 API 地址、API 类型与凭据。编辑模型时不能更换分组；如需迁移，请新建模型后删除旧条目。MVP 不提供分组重命名。',
     ),
   );
 
@@ -1245,6 +1346,131 @@ function renderGroupPage(group: ProviderGroup): HTMLElement {
   );
   wrapper.append(danger);
   return wrapper;
+}
+
+function renderGroupSettings(group: ProviderGroup): HTMLElement {
+  const existing = state.groupSettings;
+  const settings =
+    existing && existing.vendor === group.vendor && existing.groupName === group.name
+      ? existing
+      : createGroupSettings(group);
+  state.groupSettings = settings;
+  const fieldset = el('fieldset', {});
+  fieldset.append(el('legend', {}, '分组设置'));
+
+  const baseInput = input('text', settings.baseUrl, (value) => {
+    settings.baseUrl = value;
+    settings.dirty = true;
+    settings.error = undefined;
+  }, { placeholder: 'https://api.example.com/v1', spellcheck: 'false' });
+  fieldset.append(
+    field(
+      'API 地址（Base URL）',
+      'groupBaseUrl',
+      baseInput,
+      '同一分组的模型共用该地址；保存时按 API 类型拼接 /chat/completions、/responses 或 /messages。',
+    ),
+  );
+
+  const info = vendorInfo(group.vendor);
+  if (info?.supportsModelApiType ?? group.vendor === 'customendpoint') {
+    fieldset.append(
+      field(
+        'API 类型',
+        'groupApiType',
+        select(
+          [
+            ['chat-completions', 'Chat Completions'],
+            ['responses', 'Responses'],
+            ['messages', 'Messages（Anthropic 兼容）'],
+          ],
+          settings.apiType,
+          (value) => {
+            settings.apiType = value as ApiType;
+            settings.dirty = true;
+            settings.error = undefined;
+            render();
+          },
+        ),
+        '分组级 API 类型是唯一来源；保存时会移除模型级 apiType。',
+      ),
+    );
+  }
+
+  fieldset.append(
+    check(
+      '允许向非本机 http 地址发送凭据',
+      settings.allowInsecureHttp,
+      (value) => {
+        settings.allowInsecureHttp = value;
+        render();
+      },
+      'http 会明文传输 API Key。仅在可信内网且无法使用 https 时开启。',
+    ),
+  );
+
+  const preview = resolveRequestUrl(normalizeBaseUrl(settings.baseUrl), settings.apiType);
+  fieldset.append(
+    el(
+      'div',
+      { class: 'hint' },
+      `保存后会重写该分组全部 ${group.models.length} 个模型的 API 地址，并移除模型级 API 类型。${
+        settings.baseUrl.trim() ? `示例请求地址：${preview}` : '请先填写 API 地址。'
+      }`,
+    ),
+  );
+
+  if (settings.error) {
+    fieldset.append(banner('error', '分组设置未保存', settings.error));
+  }
+
+  const actions = el('div', { class: 'banner-actions' });
+  actions.append(
+    button(settings.saving ? '正在保存…' : '保存分组设置', () => saveGroupSettings(), {
+      class: 'primary',
+      disabled: settings.saving || !state.snapshot?.writeEnabled,
+    }),
+    button(group.hasApiKey ? '更新 API Key' : '设置 API Key', () => promptGroupKey(group), { class: 'link' }),
+  );
+  if (group.hasApiKey) {
+    actions.append(button('清除分组凭据', () => clearGroupKey(group), { class: 'link danger' }));
+  }
+  fieldset.append(actions);
+  return fieldset;
+}
+
+function saveGroupSettings(): void {
+  const settings = state.groupSettings;
+  const snapshot = state.snapshot;
+  if (!settings || !snapshot || settings.saving) {
+    return;
+  }
+  if (!snapshot.writeEnabled) {
+    showToast('error', '当前配置不可写，请先修复配置文件或使用官方模型管理。');
+    return;
+  }
+  const issues = validateGroupEndpoint(settings.baseUrl, settings.apiType, settings.allowInsecureHttp);
+  const errors = issues.filter((issue) => issue.severity !== 'warning');
+  if (errors.length > 0) {
+    settings.error = errors.map((issue) => issue.message).join('；');
+    render();
+    return;
+  }
+  settings.error = undefined;
+  settings.saving = true;
+  settings.dirty = true;
+  render();
+  send(
+    'group/save',
+    {
+      group: { vendor: settings.vendor, groupName: settings.groupName },
+      expectedFingerprint: snapshot.fingerprint,
+      baseUrl: normalizeBaseUrl(settings.baseUrl),
+      apiType: settings.apiType,
+      allowInsecureHttp: settings.allowInsecureHttp,
+    },
+    'groupSave',
+  );
 }
 
 function renderFormPage(form: FormState): HTMLElement {
@@ -1410,9 +1636,17 @@ function renderBasics(form: FormState): HTMLElement {
             return;
           }
           form.groupMode = 'existing';
-          updateDraft({ vendor: group.vendor, groupName: group.name }, { render: true });
+          updateDraft(
+            {
+              vendor: group.vendor,
+              groupName: group.name,
+              url: group.baseUrl ?? draft.url,
+              apiType: group.apiType ?? draft.apiType,
+            },
+            { render: true },
+          );
         }),
-        '同一分组的模型共享 API Key。不同服务账号请使用不同分组。',
+        '同一分组的模型共享 API 地址、API 类型与 API Key。不同服务账号或接口地址请使用不同分组。',
         form.groupMode === 'new' ? 'groupNameSelect' : 'groupName',
       ),
     );
@@ -1429,6 +1663,14 @@ function renderBasics(form: FormState): HTMLElement {
     }
   }
 
+  const targetGroup = findGroup(draft.vendor, draft.groupName.trim());
+  const groupManaged = form.groupMode === 'existing' && Boolean(targetGroup?.baseUrl);
+  if (groupManaged && targetGroup) {
+    fieldset.append(renderInheritedEndpoint(targetGroup));
+  } else {
+    fieldset.append(renderGroupEndpointFields(form));
+  }
+
   const idInput = input('text', draft.id, (value) => updateDraft({ id: value }), {
     placeholder: '服务方要求的 model 名称',
     required: true,
@@ -1440,9 +1682,17 @@ function renderBasics(form: FormState): HTMLElement {
     updateDraft({ name: value }, { markNameTouched: true });
   }, { placeholder: '在 Copilot 模型选择器中显示', required: true });
   fieldset.append(field('显示名称', 'name', nameInput, '新建时默认跟随模型 ID，手动修改后不再自动覆盖。'));
+  return fieldset;
+}
+
+/** 新建分组（或旧分组还没有统一地址）时，地址、类型与凭据都在这里一次填好。 */
+function renderGroupEndpointFields(form: FormState): HTMLElement {
+  const draft = form.draft;
+  const block = el('fieldset', {});
+  block.append(el('legend', {}, form.groupMode === 'new' ? '新分组设置' : '分组接口设置'));
 
   const urlInput = input('text', draft.url, (value) => updateDraft({ url: value }), {
-    placeholder: 'https://api.example.com/v1/chat/completions',
+    placeholder: 'https://api.example.com/v1',
     required: true,
     spellcheck: 'false',
   });
@@ -1451,13 +1701,13 @@ function renderBasics(form: FormState): HTMLElement {
     refreshValidation();
     updateFooter();
   });
-  fieldset.append(field('API 地址', 'url', urlInput, urlHint(draft), undefined, 'hint-url'));
+  block.append(field('分组 API 地址', 'url', urlInput, urlHint(draft), undefined, 'hint-url'));
 
   const info = vendorInfo(draft.vendor);
   if (info?.supportsModelApiType ?? draft.vendor === 'customendpoint') {
-    fieldset.append(
+    block.append(
       field(
-        'API 类型',
+        '分组 API 类型',
         'apiType',
         select(
           [
@@ -1468,13 +1718,28 @@ function renderBasics(form: FormState): HTMLElement {
           draft.apiType,
           (value) => updateDraft({ apiType: value as ModelDraft['apiType'] }),
         ),
-        '决定请求/响应格式。地址已包含 /chat/completions、/responses 或 /messages 时以其路径为准。',
+        '同一分组的模型共用该类型；保存时会写入分组并据此拼接每个模型的地址。',
       ),
     );
   }
 
-  fieldset.append(renderCredentialFields(form));
-  return fieldset;
+  block.append(renderCredentialFields(form));
+  return block;
+}
+
+/** 已有分组：只展示继承来的接口，修改入口在分组设置页。 */
+function renderInheritedEndpoint(group: ProviderGroup): HTMLElement {
+  const block = el('div', { class: 'field' });
+  block.append(el('div', { class: 'label-like' }, '接口（继承自分组）'));
+  block.append(
+    el('div', { class: 'hint' }, `${group.baseUrl ?? '未设置'} · ${apiTypeLabel(group.apiType ?? 'chat-completions')}`),
+  );
+  block.append(
+    button('打开分组设置', () => selectGroup({ vendor: group.vendor, groupName: group.name }), {
+      class: 'link',
+    }),
+  );
+  return block;
 }
 
 function renderCredentialFields(form: FormState): HTMLElement {
@@ -1716,17 +1981,21 @@ function renderAdvanced(form: FormState): HTMLElement {
   const details = el('details', { class: 'advanced' });
   details.append(el('summary', {}, '高级设置'));
   const draft = form.draft;
+  const group = findGroup(draft.vendor, draft.groupName.trim());
+  const groupManaged = form.groupMode === 'existing' && Boolean(group?.baseUrl);
 
-  const insecureBlock = el('div', { class: 'advanced-block' });
-  insecureBlock.append(
-    check(
-      '允许向非本机 http 地址发送凭据',
-      draft.allowInsecureHttp ?? false,
-      (value) => updateDraft({ allowInsecureHttp: value }),
-      'http 会明文传输 API Key。仅在可信内网且无法使用 https 时开启。',
-    ),
-  );
-  details.append(insecureBlock);
+  if (!groupManaged) {
+    const insecureBlock = el('div', { class: 'advanced-block' });
+    insecureBlock.append(
+      check(
+        '允许向非本机 http 地址发送凭据',
+        draft.allowInsecureHttp ?? false,
+        (value) => updateDraft({ allowInsecureHttp: value }),
+        'http 会明文传输 API Key。仅在可信内网且无法使用 https 时开启。',
+      ),
+    );
+    details.append(insecureBlock);
+  }
 
   const previewBlock = el('div', { class: 'advanced-block' });
   previewBlock.append(el('div', { class: 'hint' }, '即将写入的模型对象（不含 API Key）：'));
@@ -1738,9 +2007,9 @@ function renderAdvanced(form: FormState): HTMLElement {
   const links = el('div', { class: 'advanced-block' });
   links.append(el('div', { class: 'hint' }, '配置与凭据：'));
   const linkRow = el('div', { class: 'banner-actions' });
-  const group = findGroup(draft.vendor, draft.groupName.trim());
   if (group) {
     linkRow.append(
+      button('打开分组设置', () => selectGroup({ vendor: group.vendor, groupName: group.name }), { class: 'link' }),
       button(group.hasApiKey ? '更新分组 API Key' : '设置分组 API Key', () => promptGroupKey(group), { class: 'link' }),
     );
     if (group.hasApiKey) {
@@ -1772,6 +2041,12 @@ function renderAdvanced(form: FormState): HTMLElement {
 function previewJson(form: FormState): string {
   const existing = form.original ? findModel(form.original)?.model.raw : undefined;
   const raw = applyDraftToRaw(cleanDraft(form.draft), existing, capabilitiesFor(form.draft.vendor));
+  const group = findGroup(form.draft.vendor, form.draft.groupName.trim());
+  if (group?.baseUrl) {
+    applyGroupEndpointToModel(raw, group.baseUrl, group.apiType ?? 'chat-completions');
+  } else {
+    raw['url'] = form.draft.url.trim();
+  }
   return JSON.stringify(raw, undefined, 2);
 }
 
@@ -2032,10 +2307,10 @@ function refreshDerived(): void {
 
 function urlHint(draft: ModelDraft): string {
   if (!draft.url.trim()) {
-    return '优先填写完整端点。也可以填写基础地址，Copilot 会追加 /v1/chat/completions 等路径。';
+    return '填写分组共用的基础地址，例如 https://api.example.com/v1；保存时按 API 类型追加路径。';
   }
   try {
-    return `Copilot 实际请求：${resolveRequestUrl(draft.url.trim(), draft.apiType)}`;
+    return `分组内模型的实际请求：${resolveRequestUrl(draft.url.trim(), draft.apiType)}`;
   } catch {
     return '地址格式无法识别。';
   }

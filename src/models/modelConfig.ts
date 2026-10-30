@@ -56,6 +56,8 @@ export interface ProviderGroup {
   models: ModelRecord[];
   /** 分组级凭据是否存在（永远不回传密钥本身）。 */
   hasApiKey: boolean;
+  /** 分组统一管理的接口基地址；旧配置由模型 URL 推导。 */
+  baseUrl?: string;
   apiType?: ApiType;
   raw: Record<string, unknown>;
 }

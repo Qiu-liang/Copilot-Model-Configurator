@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import {
   ConfigParseError,
+  cloneGroups,
   createSanitizedExport,
   findGroup,
   fingerprintOf,
@@ -13,6 +14,15 @@ import {
   upsertModel,
   type RawGroup,
 } from '../models/configDocument.ts';
+import {
+  GROUP_BASE_URL_KEY,
+  applyGroupEndpoint,
+  applyGroupEndpointToModel,
+  normalizeBaseUrl,
+  readGroupApiType,
+  readGroupBaseUrl,
+  validateGroupEndpoint,
+} from '../models/groupEndpoint.ts';
 import { applyDraftToRaw, isVendorId, parseRawModel, validateDraft, type ProviderCapabilities } from '../models/draft.ts';
 import {
   buildImportPreview,
@@ -24,8 +34,10 @@ import {
 import {
   LEGACY_GROUP_NAME,
   VENDOR_LABELS,
+  type ApiType,
   type ConfigSnapshot,
   type ConnectionTestResult,
+  type GroupRef,
   type ImportPreview,
   type ModelDraft,
   type ModelRecord,
@@ -164,6 +176,10 @@ export class ModelConfigService {
       const vendor = this.resolveVendor(draft.vendor);
       const groupName = draft.groupName.trim();
       const existingGroup = findGroup(raw.groups, vendor, groupName);
+      // 分组接口统一管理：已有分组以分组配置为准，新建/空分组用表单里的地址与类型初始化。
+      const storedBaseUrl = existingGroup ? readGroupBaseUrl(existingGroup) : undefined;
+      const endpointBaseUrl = storedBaseUrl ?? normalizeBaseUrl(draft.url);
+      const endpointApiType = (existingGroup ? readGroupApiType(existingGroup) : undefined) ?? draft.apiType;
       const siblingIds = existingGroup
         ? groupModels(existingGroup)
             .map((model) => (typeof model['id'] === 'string' ? model['id'] : ''))
@@ -176,6 +192,7 @@ export class ModelConfigService {
         capabilities: this.providerCapabilities(vendor),
         groupExists: Boolean(existingGroup),
         groupHasCredential: existingGroup ? groupHasApiKey(existingGroup) : false,
+        groupEndpoint: storedBaseUrl ? { baseUrl: storedBaseUrl, apiType: endpointApiType } : undefined,
       });
       const errors = issues.filter((issue) => issue.severity !== 'warning');
       if (errors.length > 0) {
@@ -196,7 +213,13 @@ export class ModelConfigService {
       }
 
       const nextModel = applyDraftToRaw(draft, originalRaw, this.providerCapabilities(vendor));
+      applyGroupEndpointToModel(nextModel, endpointBaseUrl, endpointApiType);
       const groups = upsertModel(raw.groups, vendor, groupName, nextModel, original?.id);
+      const targetGroup = findGroup(groups, vendor, groupName);
+      if (targetGroup) {
+        targetGroup[GROUP_BASE_URL_KEY] = normalizeBaseUrl(endpointBaseUrl);
+        targetGroup['apiType'] = endpointApiType;
+      }
 
       const secret = draft.apiKey?.trim();
       if (secret) {
@@ -204,6 +227,38 @@ export class ModelConfigService {
       } else {
         await this.adapter.writeGroups(raw, groups);
       }
+      return this.reload();
+    });
+  }
+
+  /**
+   * 保存分组统一接口：写入 baseUrl/apiType，并用它重写分组内全部模型的 url，
+   * 同时移除模型级 apiType。凭据引用保持不变。
+   */
+  async saveGroupSettings(
+    group: GroupRef,
+    baseUrlInput: string,
+    apiType: ApiType,
+    allowInsecureHttp: boolean,
+    expectedFingerprint: string,
+  ): Promise<ConfigSnapshot> {
+    const issues = validateGroupEndpoint(baseUrlInput, apiType, allowInsecureHttp);
+    const errors = issues.filter((issue) => issue.severity !== 'warning');
+    if (errors.length > 0) {
+      throw new ValidationFailure(errors);
+    }
+    return this.enqueueWrite(async () => {
+      this.assertAvailable();
+      const raw = await this.adapter.read();
+      this.assertFingerprint(raw.text, expectedFingerprint);
+      const vendor = this.resolveVendor(group.vendor);
+      const groups = cloneGroups(raw.groups);
+      const target = findGroup(groups, vendor, group.groupName);
+      if (!target) {
+        throw new ConfigParseError(`找不到分组“${group.groupName}”。`);
+      }
+      applyGroupEndpoint(target, baseUrlInput, apiType);
+      await this.adapter.writeGroups(raw, groups);
       return this.reload();
     });
   }
@@ -404,18 +459,23 @@ export class ModelConfigService {
           continue;
         }
         const groupHasCredential = groupHasApiKey(group);
+        const groupBaseUrl = readGroupBaseUrl(group);
+        const groupApiType = readGroupApiType(group);
         const models = groupModels(group)
           .map((model) =>
-            parseRawModel(model, group.vendor as VendorId, group.name, { groupHasCredential }),
+            parseRawModel(model, group.vendor as VendorId, group.name, {
+              groupHasCredential,
+              groupApiType,
+            }),
           )
           .filter((model): model is ModelRecord => Boolean(model));
-        const apiType = group['apiType'];
         groups.push({
           name: group.name,
           vendor: group.vendor,
           models,
           hasApiKey: groupHasCredential,
-          apiType: apiType === 'chat-completions' || apiType === 'responses' || apiType === 'messages' ? apiType : undefined,
+          baseUrl: groupBaseUrl,
+          apiType: groupApiType,
           raw: { ...group },
         });
       }

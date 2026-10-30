@@ -162,7 +162,7 @@ export function readLegacyModels(value: unknown): LegacyModelInput[] {
   return result;
 }
 
-const EXPORTABLE_GROUP_FIELDS = ['name', 'vendor', 'apiType'] as const;
+const EXPORTABLE_GROUP_FIELDS = ['name', 'vendor', 'apiType', 'baseUrl'] as const;
 const EXPORTABLE_MODEL_FIELDS = [
   'id',
   'name',

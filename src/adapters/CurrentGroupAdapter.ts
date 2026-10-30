@@ -8,6 +8,7 @@ import {
   type RawGroup,
 } from '../models/configDocument.ts';
 import { ConfigFileStore, asMessage, type AdapterReadResult } from './ConfigFileStore.ts';
+import { GROUP_BASE_URL_KEY } from '../models/groupEndpoint.ts';
 import { redactText } from '../services/redact.ts';
 
 const MIGRATE_COMMAND = 'lm.migrateLanguageModelsProviderGroup';
@@ -107,6 +108,7 @@ export class CurrentGroupAdapter {
       try {
         await this.runMigrate(payload);
         await this.verifyCredential(groups, vendor, groupName, apiKey);
+        await this.restoreGroupExtras(target);
         return;
       } catch (error) {
         const message = redactText(asMessage(error), [apiKey]);
@@ -124,6 +126,7 @@ export class CurrentGroupAdapter {
     try {
       await this.runMigrate(payload);
       await this.verifyCredential(groups, vendor, groupName, apiKey);
+      await this.restoreGroupExtras(target);
     } catch (error) {
       // 3) 失败时恢复“模型已更新、仍用旧密钥”的状态。
       await this.store.write(groups);
@@ -132,6 +135,37 @@ export class CurrentGroupAdapter {
       throw new CredentialWriteError(
         `模型配置已保存，但 API Key 未能写入：${message}。可在官方模型管理中更新该分组的 Key。`,
       );
+    }
+  }
+
+  /**
+   * 官方 migrate 命令会按已知字段重建分组，插件私有的 baseUrl 需要补回；
+   * 补写失败只记录日志，不影响已经成功的凭据写入。
+   */
+  private async restoreGroupExtras(expected: RawGroup): Promise<void> {
+    const baseUrl = expected[GROUP_BASE_URL_KEY];
+    if (typeof baseUrl !== 'string' || !baseUrl.trim()) {
+      return;
+    }
+    try {
+      const written = await this.store.read();
+      const index = written.groups.findIndex(
+        (group) => group.vendor === expected.vendor && group.name === expected.name,
+      );
+      if (index < 0) {
+        return;
+      }
+      const current = written.groups[index];
+      if (current && current[GROUP_BASE_URL_KEY] === baseUrl) {
+        return;
+      }
+      const groups = written.groups.map((group, position) =>
+        position === index ? { ...group, [GROUP_BASE_URL_KEY]: baseUrl } : group,
+      );
+      await this.store.write(groups);
+      this.options.log.info(`已恢复分组“${expected.name}”的接口地址。`);
+    } catch (error) {
+      this.options.log.warn(`恢复分组“${expected.name}”的接口地址失败：${asMessage(error)}`);
     }
   }
 
@@ -247,6 +281,8 @@ export function toProviderPayload(group: RawGroup): Record<string, unknown> {
     settings: _settings,
     name: _name,
     vendor: _vendor,
+    // 插件私有字段，官方分组命令不认识，写入后由 restoreGroupExtras 补回。
+    baseUrl: _baseUrl,
     ...rest
   } = group;
   return rest;
