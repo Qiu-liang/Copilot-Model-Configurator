@@ -247,15 +247,6 @@ test/
 
 设计与实现细节见 [DEVELOPMENT.md](./DEVELOPMENT.md) 和 [IMPLEMENTATION.md](./IMPLEMENTATION.md)。
 
-## 贡献
-
-欢迎提交 Issue 和 Pull Request，中英文均可。
-
-- 提交 PR 前请运行 `npm run check`、`npm test` 和 `npm run build`。
-- 配置读写请集中在 `src/adapters/`，不要在 Webview 中直接写入。
-- 新增字段时请保留未知字段，并为合并、校验和往返转换补充单元测试。
-- 请勿在 Issue 或日志中粘贴 API Key、完整配置或请求头。
-
 ## 许可证
 
 [MIT](./LICENSE) © 2026 Qiu-liang
