@@ -20,7 +20,6 @@ import {
   createCopyDraft,
   createEmptyDraft,
   defaultEffortLevels,
-  formatTokenCount,
   hasErrors,
   normalizeEffortLevels,
   resolveRequestUrl,
@@ -745,10 +744,6 @@ function syncGroupSettings(force = false): void {
   }
 }
 
-function selectModel(group: ProviderGroup, model: ModelRecord): void {
-  startEdit({ vendor: group.vendor, groupName: group.name, id: model.id });
-}
-
 function withDiscardGuard(action: () => void): void {
   const run = (): void => {
     if (state.form?.testing) {
@@ -960,8 +955,7 @@ function render(): void {
   const content = document.querySelector<HTMLElement>('.content');
   const scrollTop = content?.scrollTop ?? 0;
 
-  app.dataset.view = state.form || state.selection.kind !== 'none' ? 'detail' : 'list';
-  app.replaceChildren(renderTopbar(), renderLayout());
+  app.replaceChildren(renderTopbar(), renderContent());
   if (state.form) {
     app.append(renderFooter());
   }
@@ -985,13 +979,9 @@ function render(): void {
 
 function renderSkeleton(): HTMLElement {
   const wrapper = el('div', { class: 'skeleton-layout' });
-  const left = el('div', {});
-  for (let index = 0; index < 4; index += 1) {
-    left.append(el('div', { class: 'skeleton card' }));
+  for (let index = 0; index < 3; index += 1) {
+    wrapper.append(el('div', { class: 'skeleton hero' }));
   }
-  const right = el('div', {});
-  right.append(el('div', { class: 'skeleton hero' }), el('div', { class: 'skeleton hero' }));
-  wrapper.append(left, right);
   const status = el('div', { class: 'loading', role: 'status' }, '正在读取 Copilot 模型配置…');
   const container = el('div', {});
   container.append(wrapper, status);
@@ -1066,137 +1056,6 @@ function renderMoreMenu(): HTMLElement {
   return details;
 }
 
-function renderLayout(): HTMLElement {
-  const layout = el('div', { class: 'layout' });
-  layout.append(renderSidebar(), renderContent());
-  return layout;
-}
-
-function renderSidebar(): HTMLElement {
-  const sidebar = el('nav', { class: 'sidebar', 'aria-label': '模型列表' });
-  const groups = state.snapshot?.groups ?? [];
-  const legacy = state.snapshot?.legacyModels ?? [];
-
-  const heading = el('div', { class: 'sidebar-heading' });
-  heading.append(el('span', {}, `连接分组 · ${groups.length}`));
-  sidebar.append(heading);
-
-  if (groups.length === 0) {
-    const empty = el('div', { class: 'empty' });
-    empty.append(
-      el('p', {}, '还没有第三方模型配置。'),
-      button('添加第一个模型', () => startCreate(), {
-        class: 'primary',
-        disabled: !state.snapshot?.writeEnabled,
-      }),
-    );
-    sidebar.append(empty);
-  }
-
-  for (const group of groups) {
-    sidebar.append(renderGroupSection(group));
-  }
-
-  if (legacy.length > 0) {
-    sidebar.append(renderLegacyCard(legacy));
-  }
-  return sidebar;
-}
-
-function renderGroupSection(group: ProviderGroup): HTMLElement {
-  const section = el('div', { class: 'group' });
-  const head = el('div', { class: 'group-head' });
-  const info = vendorInfo(group.vendor);
-  const selected = state.selection.kind === 'group' && state.selection.group.vendor === group.vendor && state.selection.group.groupName === group.name;
-  const title = button('', () => selectGroup({ vendor: group.vendor, groupName: group.name }), {
-    class: 'group-title' + (selected ? ' selected' : ''),
-  });
-  title.setAttribute('aria-label', `打开分组设置：${group.name}`);
-  title.append(el('span', { class: 'name' }, group.name));
-  title.append(el('span', { class: 'badge' }, info?.label ?? group.vendor));
-  if (group.hasApiKey) {
-    title.append(el('span', { class: 'badge on' }, '已存凭据'));
-  } else {
-    title.append(el('span', { class: 'badge warn' }, '无凭据'));
-  }
-  head.append(title);
-  section.append(head);
-
-  for (const model of group.models) {
-    section.append(renderModelCard(group, model));
-  }
-  if (group.models.length === 0) {
-    section.append(el('div', { class: 'hint' }, '分组中还没有模型。'));
-  }
-  return section;
-}
-
-function renderModelCard(group: ProviderGroup, model: ModelRecord): HTMLElement {
-  const ref: ModelRef = { vendor: group.vendor, groupName: group.name, id: model.id };
-  const selected = state.selection.kind === 'model' && sameRef(state.selection.ref, ref);
-  const card = el('div', { class: 'model-card' + (selected ? ' selected' : '') });
-  const main = button('', () => selectModel(group, model), { class: 'model-main' });
-  main.setAttribute('aria-current', selected ? 'true' : 'false');
-  main.setAttribute('aria-label', `编辑模型 ${model.name}（${model.id}）`);
-  const title = el('span', { class: 'title', title: model.name }, model.name);
-  const meta = el('span', { class: 'meta', title: model.id }, `${model.id} · ${formatTokenCount(model.contextWindow)} 上下文`);
-  const badges = el('span', { class: 'badges' });
-  badges.append(el('span', { class: 'badge' }, apiTypeLabel(model.apiType)));
-  if (model.vision) {
-    badges.append(el('span', { class: 'badge on' }, '视觉'));
-  }
-  if (model.thinking) {
-    badges.append(
-      el('span', { class: 'badge on' }, `思考 ${model.supportsReasoningEffort.join('/') || '默认'}`),
-    );
-  }
-  if (!model.toolCalling) {
-    badges.append(el('span', { class: 'badge' }, '无工具调用'));
-  }
-  if (!model.streaming) {
-    badges.append(el('span', { class: 'badge' }, '非流式'));
-  }
-  main.append(title, meta, badges);
-  card.append(main);
-
-  const actions = el('div', { class: 'model-actions' });
-  actions.append(
-    button('复制', () => startCopy(ref), {
-      class: 'icon-button',
-      'aria-label': `复制模型 ${model.name}`,
-      title: '复制模型',
-    }),
-    button('删除', () => deleteModel(ref, model.name), {
-      class: 'icon-button danger',
-      'aria-label': `删除模型 ${model.name}`,
-      title: '删除模型',
-    }),
-  );
-  card.append(actions);
-  return card;
-}
-
-function renderLegacyCard(models: readonly ModelRecord[]): HTMLElement {
-  const card = el('div', { class: 'legacy-card' });
-  card.append(el('strong', {}, `旧版设置 · ${models.length} 个模型`));
-  const list = el('ul', {});
-  for (const model of models.slice(0, 6)) {
-    list.append(el('li', {}, `${model.name}（${model.id}）`));
-  }
-  if (models.length > 6) {
-    list.append(el('li', {}, `…还有 ${models.length - 6} 个`));
-  }
-  card.append(list);
-  card.append(el('div', { class: 'hint' }, '旧设置只会被读取；导入不会删除它，也不会自动迁移。'));
-  const actions = el('div', { class: 'banner-actions' });
-  actions.append(
-    button('导入到面板', () => importLegacy(), { class: 'primary' }),
-    button('查看设置', () => send('legacy/openSetting', {}, 'open'), { class: 'link' }),
-  );
-  card.append(actions);
-  return card;
-}
-
 function renderContent(): HTMLElement {
   const content = el('main', { class: 'content', id: 'content' });
   if (state.form) {
@@ -1226,7 +1085,7 @@ function renderWelcome(): HTMLElement {
     banner(
       'info',
       '可视化添加第三方模型',
-      '配置写入当前 VS Code Profile 的语言模型配置文件。面板只合并目标分组和目标模型，并保留其他字段、其他分组与其他提供方配置。',
+      '模型列表在左侧活动栏中：点击模型编辑，点击分组修改地址与凭据。配置写入当前 VS Code Profile 的语言模型配置文件，面板只合并目标分组和目标模型，并保留其他字段、其他分组与其他提供方配置。',
     ),
   );
   if (snapshot?.adapterMessage) {
@@ -1280,7 +1139,6 @@ function renderWelcome(): HTMLElement {
 function renderGroupPage(group: ProviderGroup): HTMLElement {
   const wrapper = el('div', {});
   const head = el('div', { class: 'page-head' });
-  head.append(backButton());
   const titles = el('div', {});
   titles.append(el('h2', {}, group.name));
   const info = vendorInfo(group.vendor);
@@ -1323,15 +1181,9 @@ function renderGroupPage(group: ProviderGroup): HTMLElement {
     ),
   );
 
-  const list = el('fieldset', {});
-  list.append(el('legend', {}, '分组中的模型'));
-  if (group.models.length === 0) {
-    list.append(el('div', { class: 'hint' }, '还没有模型。点击上方“新增模型到该分组”开始。'));
-  }
-  for (const model of group.models) {
-    list.append(renderModelCard(group, model));
-  }
-  wrapper.append(list);
+  wrapper.append(
+    el('div', { class: 'hint' }, '模型列表在左侧活动栏中；点击单个模型即可编辑。'),
+  );
 
   const danger = el('div', { class: 'footer' });
   const status = el('div', { class: 'status-text' }, '危险操作会修改 Copilot 配置。');
@@ -1476,7 +1328,6 @@ function saveGroupSettings(): void {
 function renderFormPage(form: FormState): HTMLElement {
   const wrapper = el('div', {});
   const head = el('div', { class: 'page-head' });
-  head.append(backButton());
   const titles = el('div', {});
   const heading =
     form.mode === 'create'
@@ -1515,7 +1366,7 @@ function renderFormPage(form: FormState): HTMLElement {
     const stale = banner(
       'warn',
       '配置已在外部修改',
-      '保存会基于打开表单时的快照进行冲突检测。若外部修改不影响目标分组，可改用最新快照继续；否则请返回列表刷新。',
+      '保存会基于打开表单时的快照进行冲突检测。若外部修改不影响目标分组，可改用最新快照继续；否则请关闭表单，刷新左侧模型树后重试。',
     );
     const actions = el('div', { class: 'banner-actions' });
     actions.append(
@@ -1528,7 +1379,7 @@ function renderFormPage(form: FormState): HTMLElement {
           render();
         }
       }, { class: 'link' }),
-      button('返回列表', () => closeForm(), { class: 'link' }),
+      button('关闭表单', () => closeForm(), { class: 'link' }),
     );
     stale.append(actions);
     wrapper.append(stale);
@@ -2988,10 +2839,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
-function backButton(): HTMLElement {
-  return button('← 返回列表', () => closeForm(), { class: 'link back-button' });
-}
-
 function groupKey(vendor: VendorId, name: string): string {
   return `${vendor}\u0000${name}`;
 }
@@ -3009,10 +2856,6 @@ function uniqueGroupName(vendor: VendorId, base: string): string {
     }
   }
   return `${preferred} ${Date.now()}`;
-}
-
-function sameRef(a: ModelRef, b: ModelRef): boolean {
-  return a.vendor === b.vendor && a.groupName === b.groupName && a.id === b.id;
 }
 
 function apiTypeLabel(apiType: ModelDraft['apiType']): string {

@@ -4,7 +4,7 @@
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.90-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/Qiu-liang/Copilot-Model-Configurator/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/Qiu-liang/Copilot-Model-Configurator/releases)
 
 > **English** — A VS Code extension for managing GitHub Copilot BYOK models through a visual panel. Endpoint groups own the base URL, API type and credentials; models declare context size, vision, tool calling and reasoning effort. It also provides connection tests, import/export, automatic backups and conflict detection. This is a configuration tool, not a proxy: requests still go directly from Copilot to your provider. The UI is currently in Chinese; issues and pull requests in English are welcome.
 
@@ -27,6 +27,7 @@ Copilot 的 BYOK 配置本质上是一份 JSON。手写时很容易遇到这些�
 
 **分组与模型**
 
+- 左侧活动栏树按连接分组列出模型；点击模型在右侧面板编辑，点击分组修改地址与凭据。
 - 新增、编辑、复制、删除模型，按连接分组浏览。
 - 分组统一维护 Base URL、API 类型和 API Key；模型只填 ID、显示名称、上下文和能力。
 - 保存分组设置会按分组地址重写该组全部模型 URL，并移除模型级 `apiType`。
@@ -53,7 +54,7 @@ Copilot 的 BYOK 配置本质上是一份 JSON。手写时很容易遇到这些�
 
 **入口与可访问性**
 
-- 活动栏侧边栏、视图标题按钮、命令面板和侧边栏右键菜单。
+- 活动栏模型树、视图标题按钮、命令面板和侧边栏右键菜单；右侧面板只显示编辑表单或分组设置，不重复模型列表。
 - 窄屏自动切换单列导航；完整键盘操作、焦点管理、主题变量与屏幕阅读器标签。
 
 ## 安装
@@ -73,7 +74,7 @@ Copilot 的 BYOK 配置本质上是一份 JSON。手写时很容易遇到这些�
 1. 在扩展视图右上角 `...` → **从 VSIX 安装**，或使用命令行：
 
 ```bash
-code --install-extension copilot-model-configurator-0.2.0.vsix
+code --install-extension copilot-model-configurator-0.3.0.vsix
 ```
 
 2. 重载窗口。
@@ -89,15 +90,15 @@ git clone https://github.com/Qiu-liang/Copilot-Model-Configurator.git
 cd Copilot-Model-Configurator
 npm install
 npm run build
-npx @vscode/vsce package --allow-missing-repository
-code --install-extension copilot-model-configurator-0.2.0.vsix
+npx @vscode/vsce package
+code --install-extension copilot-model-configurator-0.3.0.vsix
 ```
 
 版本号以实际生成的 `.vsix` 文件名为准。
 
 ## 快速开始
 
-1. 点击活动栏 **Copilot 模型**，或在命令面板运行 **Copilot 模型: 打开模型管理面板**。
+1. 点击活动栏 **Copilot 模型**，在左侧模型树中选择模型；也可以运行命令 **Copilot 模型: 打开模型管理面板**。
 2. 新建连接分组，填写 **Base URL** 和 **API 类型**；保存后在分组设置中填写 **API Key**（本地服务可选择“无需认证”）。
 3. 在分组下点击 **新增模型**，填写模型 ID、显示名称、上下文与能力。地址、类型和凭据自动继承自分组。
 4. 可选：点击 **测试连接** 验证地址、类型和凭据。
@@ -234,11 +235,11 @@ VSCODE_EXECUTABLE="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm
 
 ```text
 src/
-├── extension.ts       # 命令、侧边栏、文件监听、生命周期
+├── extension.ts       # 命令、侧边栏、面板、文件监听、生命周期
 ├── adapters/          # Copilot 配置读写边界（唯一写入点）
 ├── models/            # 草稿、校验、分组地址、导入导出
 ├── services/          # 保存编排、冲突检测、连接测试、脱敏
-├── panel/             # Webview 宿主、消息协议、侧边栏树
+├── panel/             # Webview 宿主、消息协议、模型树
 └── webview/           # 无框架前端（HTML / CSS / TypeScript）
 test/
 ├── unit/              # 单元测试

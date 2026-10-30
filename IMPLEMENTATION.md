@@ -7,11 +7,13 @@
 ### 命令与入口
 
 - `copilotModels.open` / `copilotModels.add`：打开模型管理面板或直接进入新增流程。
-- `copilotModels.openModel` / `copilotModels.copyModel` / `copilotModels.openGroup`：从侧边栏打开模型、复制模型、打开分组设置。
+- `copilotModels.openModel` / `copilotModels.copyModel` / `copilotModels.openGroup`：从侧边栏树打开模型、复制模型、打开分组设置。
 - `copilotModels.deleteModel`：侧边栏右键删除，带确认。
+- 树命令的实参有两种来源：`TreeItem.command.arguments` 传显式 ref，`view/item/context` 内联按钮传树元素实例。四个树命令统一用 `models/refs.ts` 的 `modelRefOf` / `groupRefOf` 归一化后再执行。
 - `copilotModels.refresh` / `copilotModels.export` / `copilotModels.importLegacy`。
 - `copilotModels.openConfigFile` / `copilotModels.openBackups` / `copilotModels.openLegacySetting` / `copilotModels.openDashboard`。
-- 活动栏“Copilot 模型”视图 + 视图标题按钮（打开面板、添加模型、刷新）。
+- 活动栏“Copilot 模型”视图展示分组/模型树，视图标题按钮提供打开面板、添加模型和刷新。
+- 面板只显示欢迎页、编辑表单或分组设置，不再重复渲染模型列表；点击树中的模型或分组会定向打开面板。
 - 面板“更多”菜单提供导入、导出、旧版导入、打开配置文件/备份目录/旧设置和官方模型管理。
 
 ### 模型管理
@@ -48,7 +50,7 @@
 
 ```text
 src/
-├── extension.ts                        # 命令、侧边栏、文件监听、生命周期
+├── extension.ts                        # 命令、侧边栏、面板、文件监听、生命周期
 ├── panel/
 │   ├── ModelPanel.ts                   # Webview 宿主、CSP、nonce、资源与消息入口
 │   ├── MessageController.ts            # 请求校验、去重、确认、错误分类与响应
@@ -171,8 +173,9 @@ interface ExtensionResponse {
 | --- | --- |
 | [src/extension.ts](./src/extension.ts) | 注册命令、侧边栏、初始化服务、监听配置文件与旧版设置 |
 | [src/panel/ModelPanel.ts](./src/panel/ModelPanel.ts) | Webview 宿主、CSP、模板加载、脏标题 |
+| [src/panel/ModelTreeProvider.ts](./src/panel/ModelTreeProvider.ts) | 侧边栏分组/模型树与空状态描述 |
 | [src/panel/MessageController.ts](./src/panel/MessageController.ts) | 消息校验、请求去重、确认对话框、错误响应 |
-| [src/webview/main.ts](./src/webview/main.ts) | 列表、分组设置、表单、导入预览、对话框、可访问性 |
+| [src/webview/main.ts](./src/webview/main.ts) | 表单、分组设置、导入预览、对话框、可访问性 |
 | [src/services/ModelConfigService.ts](./src/services/ModelConfigService.ts) | 快照、冲突检测、合并、保存、导入导出 |
 | [src/adapters/CopilotConfigAdapter.ts](./src/adapters/CopilotConfigAdapter.ts) | 唯一 Copilot 读写边界与能力汇总 |
 | [src/adapters/CurrentGroupAdapter.ts](./src/adapters/CurrentGroupAdapter.ts) | 原子写入、备份、凭据重建命令 |

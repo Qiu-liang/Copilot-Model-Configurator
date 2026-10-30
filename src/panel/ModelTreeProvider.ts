@@ -1,5 +1,12 @@
 import * as vscode from 'vscode';
-import type { ConfigSnapshot, ModelRecord, ProviderGroup, VendorId } from '../models/modelConfig.ts';
+import type {
+  ConfigSnapshot,
+  GroupRef,
+  ModelRecord,
+  ModelRef,
+  ProviderGroup,
+  VendorId,
+} from '../models/modelConfig.ts';
 import { LEGACY_GROUP_NAME, VENDOR_LABELS } from '../models/modelConfig.ts';
 import { formatTokenCount } from '../models/draft.ts';
 
@@ -7,10 +14,12 @@ export type ModelTreeItem = GroupTreeItem | ModelTreeLeaf | LegacyTreeItem;
 
 export class GroupTreeItem extends vscode.TreeItem {
   readonly group: ProviderGroup;
+  readonly ref: GroupRef;
 
   constructor(group: ProviderGroup) {
     super(group.name, vscode.TreeItemCollapsibleState.Expanded);
     this.group = group;
+    this.ref = { vendor: group.vendor, groupName: group.name };
     this.id = `group:${group.vendor}:${group.name}`;
     this.contextValue = 'copilotModels.group';
     const vendorLabel = VENDOR_LABELS[group.vendor as VendorId] ?? group.vendor;
@@ -25,17 +34,19 @@ export class GroupTreeItem extends vscode.TreeItem {
     this.command = {
       command: 'copilotModels.openGroup',
       title: '打开分组设置',
-      arguments: [{ vendor: group.vendor, groupName: group.name }],
+      arguments: [this.ref],
     };
   }
 }
 
 export class ModelTreeLeaf extends vscode.TreeItem {
   readonly model: ModelRecord;
+  readonly ref: ModelRef;
 
   constructor(model: ModelRecord) {
     super(model.name || model.id, vscode.TreeItemCollapsibleState.None);
     this.model = model;
+    this.ref = { vendor: model.vendor, groupName: model.groupName, id: model.id };
     this.id = `model:${model.vendor}:${model.groupName}:${model.id}`;
     this.contextValue = 'copilotModels.model';
     this.description = `${formatTokenCount(model.contextWindow)} · ${model.apiType}`;
@@ -53,10 +64,11 @@ export class ModelTreeLeaf extends vscode.TreeItem {
       `接口：${model.url}`,
     ].join('\n');
     this.iconPath = new vscode.ThemeIcon(model.vision ? 'eye' : 'symbol-method');
+    // 内联按钮（view/item/context）拿到的实参是树元素本身，两个入口都只传 ref。
     this.command = {
       command: 'copilotModels.openModel',
       title: '编辑模型',
-      arguments: [model],
+      arguments: [this.ref],
     };
   }
 }

@@ -36,6 +36,14 @@ export async function run() {
   const service = api.getService();
   assert.ok(service, '扩展服务未初始化');
 
+  // 打开面板命令应创建管理面板。
+  await vscode.commands.executeCommand('copilotModels.open');
+  await waitFor(() =>
+    vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some((tab) => String(tab.input?.viewType ?? '').endsWith('copilotModels.panel')),
+    ),
+  );
+
   // 以扩展实际解析到的配置路径为准；不同 VS Code 版本对 globalStorageUri 的布局可能不同。
   const configPath = service.configFilePath;
   assert.ok(configPath.startsWith(userDataDir), `配置路径不在测试目录内：${configPath}`);
@@ -344,5 +352,47 @@ export async function run() {
   assert.equal(fs.readFileSync(configPath, 'utf8'), beforeKeyUpdateText, '密钥写入失败不得改动配置');
   assert.equal(fs.readFileSync(configPath, 'utf8').includes('hostless-key-456'), false);
 
+  // 17) 侧边栏内联按钮传入的是树元素而非模型记录：命令必须能按 ref 定位并删除。
+  const settings = vscode.workspace.getConfiguration('copilotModelManager');
+  await settings.update('confirmBeforeDelete', false, vscode.ConfigurationTarget.Global);
+  const beforeInline = await service.reload();
+  const inlineModel = beforeInline.groups.find((group) => group.name === 'ProbeGroup')?.models[0];
+  assert.ok(inlineModel, '前置条件：ProbeGroup 应包含模型');
+  const addedInline = await service.saveDraft(
+    {
+      ...inlineModel,
+      id: 'inline-delete',
+      name: 'Inline Delete',
+    },
+    beforeInline.fingerprint,
+  );
+  assert.ok(
+    addedInline.groups.some((group) => group.models.some((model) => model.id === 'inline-delete')),
+    '前置条件：模型应已保存',
+  );
+  class FakeModelLeaf extends vscode.TreeItem {
+    constructor(model) {
+      super(model.name || model.id, vscode.TreeItemCollapsibleState.None);
+      this.model = model;
+      this.ref = { vendor: model.vendor, groupName: model.groupName, id: model.id };
+      this.contextValue = 'copilotModels.model';
+    }
+  }
+  const treeElement = new FakeModelLeaf({
+    id: 'inline-delete',
+    name: 'Inline Delete',
+    vendor: 'customendpoint',
+    groupName: 'ProbeGroup',
+  });
+  await vscode.commands.executeCommand('copilotModels.deleteModel', treeElement);
+  const afterInline = await service.reload();
+  assert.equal(
+    afterInline.groups.some((group) => group.models.some((model) => model.id === 'inline-delete')),
+    false,
+    '内联删除按钮必须真正删除目标模型',
+  );
+  await settings.update('confirmBeforeDelete', undefined, vscode.ConfigurationTarget.Global);
+
+  console.log('集成用例全部通过（含侧边栏树元素 ref 回归）');
   fs.writeFileSync(configPath, JSON.stringify(original, null, '\t') + '\n', 'utf8');
 }

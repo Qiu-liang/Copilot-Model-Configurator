@@ -6,7 +6,8 @@ import { ModelPanel } from './panel/ModelPanel.ts';
 import { ModelTreeProvider, describeEmptyState, type ModelTreeItem } from './panel/ModelTreeProvider.ts';
 import { ConnectionTester } from './services/ConnectionTester.ts';
 import { ModelConfigService } from './services/ModelConfigService.ts';
-import type { GroupRef, ModelRecord, ModelRef } from './models/modelConfig.ts';
+import { groupRefOf, modelRefOf } from './models/refs.ts';
+import type { GroupRef, ModelRef } from './models/modelConfig.ts';
 
 export interface ExtensionApi {
   readonly version: string;
@@ -53,6 +54,23 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
 
   const panelContext = { service, log, onDidChange: changeEmitter.event };
 
+  const showInitializationError = (): void => {
+    void vscode.window.showErrorMessage(
+      `无法读取 Copilot 模型配置：${initializationError instanceof Error ? initializationError.message : String(initializationError)}`,
+    );
+  };
+
+  const openPanel = (
+    mode: 'open' | 'add' | 'copy',
+    target: { ref?: ModelRef; group?: GroupRef } = {},
+  ): void => {
+    if (initializationError) {
+      showInitializationError();
+      return;
+    }
+    ModelPanel.show(context.extensionUri, panelContext, mode, target);
+  };
+
   const treeProvider = new ModelTreeProvider();
   let treeView: vscode.TreeView<ModelTreeItem> | undefined;
   try {
@@ -74,46 +92,38 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
   }
   context.subscriptions.push(changeEmitter.event(() => syncTree()));
 
-  const showInitializationError = (): void => {
-    void vscode.window.showErrorMessage(
-      `无法读取 Copilot 模型配置：${initializationError instanceof Error ? initializationError.message : String(initializationError)}`,
-    );
-  };
-
-  const openPanel = (mode: 'open' | 'add' | 'copy', target: { ref?: ModelRef; group?: GroupRef } = {}): void => {
-    if (initializationError) {
-      showInitializationError();
-      return;
-    }
-    ModelPanel.show(context.extensionUri, panelContext, mode, target);
-  };
-
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotModels.open', () => openPanel('open')),
     vscode.commands.registerCommand('copilotModels.add', () => openPanel('add')),
-    vscode.commands.registerCommand('copilotModels.openModel', (model?: ModelRecord) => {
-      if (!model) {
+    vscode.commands.registerCommand('copilotModels.openModel', (value?: unknown) => {
+      const ref = modelRefOf(value);
+      if (!ref) {
         openPanel('open');
         return;
       }
-      openPanel('open', { ref: { vendor: model.vendor, groupName: model.groupName, id: model.id } });
+      openPanel('open', { ref });
     }),
-    vscode.commands.registerCommand('copilotModels.copyModel', (model?: ModelRecord) => {
-      if (!model) {
+    vscode.commands.registerCommand('copilotModels.copyModel', (value?: unknown) => {
+      const ref = modelRefOf(value);
+      if (!ref) {
         openPanel('open');
         return;
       }
-      openPanel('copy', { ref: { vendor: model.vendor, groupName: model.groupName, id: model.id } });
+      openPanel('copy', { ref });
     }),
-    vscode.commands.registerCommand('copilotModels.openGroup', (group?: GroupRef) => {
+    vscode.commands.registerCommand('copilotModels.openGroup', (value?: unknown) => {
+      const group = groupRefOf(value);
       if (!group) {
         openPanel('open');
         return;
       }
       openPanel('open', { group });
     }),
-    vscode.commands.registerCommand('copilotModels.deleteModel', async (model?: ModelRecord) => {
-      if (!model) {
+    vscode.commands.registerCommand('copilotModels.deleteModel', async (value?: unknown) => {
+      const ref = modelRefOf(value);
+      if (!ref) {
+        // 内联按钮传入的是树元素；解析失败说明条目已过期，必须提示而不是静默返回。
+        void vscode.window.showWarningMessage('无法识别要删除的模型，请刷新侧边栏后重试。');
         return;
       }
       await initialization;
@@ -121,10 +131,18 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
       if (!snapshot) {
         return;
       }
+      const target = snapshot.groups
+        .find((group) => group.vendor === ref.vendor && group.name === ref.groupName)
+        ?.models.find((model) => model.id === ref.id);
+      if (!target) {
+        void vscode.window.showWarningMessage(`模型“${ref.id}”已不存在，请刷新侧边栏后重试。`);
+        return;
+      }
+      const label = target.name || target.id;
       const confirm = vscode.workspace.getConfiguration('copilotModelManager').get<boolean>('confirmBeforeDelete', true);
       if (confirm) {
         const choice = await vscode.window.showWarningMessage(
-          `确定删除模型“${model.id}”吗？此操作会修改 Copilot 配置。`,
+          `确定删除模型“${label}”吗？此操作会修改 Copilot 配置。`,
           { modal: true },
           '删除',
         );
@@ -133,12 +151,9 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
         }
       }
       try {
-        await service.deleteModel(
-          { vendor: model.vendor, groupName: model.groupName, id: model.id },
-          snapshot.fingerprint,
-        );
+        await service.deleteModel(ref, snapshot.fingerprint);
         changeEmitter.fire();
-        void vscode.window.showInformationMessage(`已删除模型“${model.name || model.id}”。`);
+        void vscode.window.showInformationMessage(`已删除模型“${label}”。`);
       } catch (error) {
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
       }

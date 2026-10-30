@@ -2,9 +2,13 @@
   "name": "copilot-model-configurator",
   "displayName": "Copilot Model Configurator",
   "description": "可视化添加和管理 GitHub Copilot 第三方模型",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Qiu-liang/Copilot-Model-Configurator.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -240,6 +244,7 @@
     "media",
     "package.json",
     "README.md",
+    "LICENSE",
     "DEVELOPMENT.md",
     "IMPLEMENTATION.md"
   ]
