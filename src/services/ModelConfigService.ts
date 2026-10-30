@@ -232,11 +232,17 @@ export class ModelConfigService {
     });
   }
 
-  async updateApiKey(vendorInput: VendorId, groupName: string, apiKey: string): Promise<void> {
+  async updateApiKey(
+    vendorInput: VendorId,
+    groupName: string,
+    apiKey: string,
+    expectedFingerprint: string,
+  ): Promise<void> {
     return this.enqueueWrite(async () => {
       this.assertAvailable();
       const vendor = this.resolveVendor(vendorInput);
       const raw = await this.adapter.read();
+      this.assertFingerprint(raw.text, expectedFingerprint);
       if (!findGroup(raw.groups, vendor, groupName)) {
         throw new ConfigParseError(`找不到分组“${groupName}”。`);
       }

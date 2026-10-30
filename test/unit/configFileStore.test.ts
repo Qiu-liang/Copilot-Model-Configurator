@@ -75,6 +75,29 @@ test('备份按数量上限清理', async () => {
   assert.equal(entries.length, 2);
 });
 
+test('同一毫秒的多次备份不会互相覆盖', async () => {
+  const { store } = await tempStore();
+  const RealDate = Date;
+  const fixed = RealDate.parse('2026-01-02T03:04:05.678Z');
+  class FixedDate extends RealDate {
+    constructor() {
+      super(fixed);
+    }
+  }
+  (globalThis as { Date: DateConstructor }).Date = FixedDate as unknown as DateConstructor;
+  try {
+    const first = await store.createBackup('one', 10);
+    const second = await store.createBackup('two', 10);
+    assert.ok(first);
+    assert.ok(second);
+    assert.notEqual(first, second);
+    assert.equal(await fs.readFile(first, 'utf8'), 'one');
+    assert.equal(await fs.readFile(second, 'utf8'), 'two');
+  } finally {
+    (globalThis as { Date: DateConstructor }).Date = RealDate;
+  }
+});
+
 test('keep 为 0 时不创建备份目录', async () => {
   const { store } = await tempStore();
   const result = await store.createBackup('[]', 0);

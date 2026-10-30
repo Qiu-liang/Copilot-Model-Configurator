@@ -117,9 +117,10 @@ export class CurrentGroupAdapter {
     }
 
     // 2) 目标分组已存在：VS Code 的分组注册会拒绝重名，需临时移除后再重建。
+    // 移除前同样走 writeGroups，确保“临时移除”状态也有备份可恢复。
     const fresh = await this.store.read();
     const withoutGroup = removeGroupFromDocument(fresh.groups, vendor, groupName);
-    await this.store.write(withoutGroup);
+    await this.writeGroups(fresh, withoutGroup);
     try {
       await this.runMigrate(payload);
       await this.verifyCredential(groups, vendor, groupName, apiKey);

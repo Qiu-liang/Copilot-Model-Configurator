@@ -58,7 +58,7 @@ export interface RequestPayloads {
   'legacy/openSetting': Record<string, never>;
   'connection/test': { draft: ModelDraft };
   'connection/cancel': Record<string, never>;
-  'group/promptApiKey': { group: GroupRef };
+  'group/promptApiKey': { group: GroupRef; expectedFingerprint: string };
   'group/clearApiKey': { group: GroupRef; expectedFingerprint: string };
   'panel/openOfficial': Record<string, never>;
   'panel/openConfigFile': Record<string, never>;
@@ -305,20 +305,14 @@ export function parseWebviewRequest(value: unknown): WebviewRequest | ParsedRequ
       return { type, requestId, payload: { ref, expectedFingerprint } };
     }
     case 'config/deleteGroup':
-    case 'group/clearApiKey': {
+    case 'group/clearApiKey':
+    case 'group/promptApiKey': {
       const group = parseGroupRef(payload['group']);
       const expectedFingerprint = parseFingerprint(payload['expectedFingerprint']);
       if (!group || !expectedFingerprint) {
         return { requestId, error: invalid('分组操作参数无效。') };
       }
       return { type, requestId, payload: { group, expectedFingerprint } };
-    }
-    case 'group/promptApiKey': {
-      const group = parseGroupRef(payload['group']);
-      if (!group) {
-        return { requestId, error: invalid('分组操作参数无效。') };
-      }
-      return { type, requestId, payload: { group } };
     }
     case 'config/export':
       return { type, requestId, payload: { copy: bool(payload['copy']) ?? false } };

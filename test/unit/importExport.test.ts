@@ -88,6 +88,22 @@ test('导入预览拒绝缺少 id 的模型', () => {
   assert.ok(preview.groups[0]?.issues.some((issue) => issue.field === 'id'));
 });
 
+test('导入预览明确报告不支持的提供方', () => {
+  const preview = buildImportPreview(
+    [{ name: 'G', vendor: 'openai', models: [validModel] }],
+    [],
+    () => FULL_CAPABILITIES,
+  );
+  assert.equal(preview.canApply, false);
+  const issues = preview.groups[0]?.issues ?? [];
+  assert.ok(issues.some((issue) => issue.field === 'vendor' && issue.message.includes('openai')));
+  assert.equal(
+    issues.some((issue) => issue.field === 'id'),
+    false,
+    '不支持的提供方不应同时被误报为缺少 id',
+  );
+});
+
 test('合并导入保留原凭据与 settings，并替换模型列表', () => {
   const existing: RawGroup[] = [
     {

@@ -288,5 +288,21 @@ export async function run() {
   assert.equal(noAuthSaved.credentialMode, 'none');
   assert.equal('apiKey' in read().find((group) => group.name === 'ProbeGroup'), false);
 
+  // 13) 更新分组密钥与其它写入路径一致：过期快照必须拒绝，不覆盖外部修改。
+  await assert.rejects(
+    () => service.updateApiKey('customendpoint', 'ProbeGroup', 'stale-key-123', snapshot.fingerprint),
+    (error) => /外部修改/.test(String(error.message)),
+  );
+
+  // 14) 快照最新但宿主缺少 Copilot 时，密钥写入失败且不落盘。
+  const keySnapshot = await service.reload();
+  const beforeKeyUpdateText = fs.readFileSync(configPath, 'utf8');
+  await assert.rejects(
+    () => service.updateApiKey('customendpoint', 'ProbeGroup', 'hostless-key-456', keySnapshot.fingerprint),
+    (error) => /API Key/.test(String(error.message)),
+  );
+  assert.equal(fs.readFileSync(configPath, 'utf8'), beforeKeyUpdateText, '密钥写入失败不得改动配置');
+  assert.equal(fs.readFileSync(configPath, 'utf8').includes('hostless-key-456'), false);
+
   fs.writeFileSync(configPath, JSON.stringify(original, null, '\t') + '\n', 'utf8');
 }

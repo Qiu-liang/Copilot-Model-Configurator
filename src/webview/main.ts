@@ -2399,9 +2399,19 @@ function deleteGroup(group: ProviderGroup): void {
 }
 
 function promptGroupKey(group: ProviderGroup): void {
-  send('group/promptApiKey', { group: { vendor: group.vendor, groupName: group.name } }, 'groupKey', {
-    group: { vendor: group.vendor, groupName: group.name },
-  });
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return;
+  }
+  send(
+    'group/promptApiKey',
+    {
+      group: { vendor: group.vendor, groupName: group.name },
+      expectedFingerprint: snapshot.fingerprint,
+    },
+    'groupKey',
+    { group: { vendor: group.vendor, groupName: group.name } },
+  );
 }
 
 function clearGroupKey(group: ProviderGroup): void {

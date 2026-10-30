@@ -139,7 +139,7 @@ export class MessageController {
         return {};
       }
       case 'group/promptApiKey': {
-        const { group } = request.payload;
+        const { group, expectedFingerprint } = request.payload;
         const existing = this.service.currentSnapshot?.groups.find(
           (entry) => entry.vendor === group.vendor && entry.name === group.groupName,
         );
@@ -156,7 +156,7 @@ export class MessageController {
         if (!apiKey) {
           throw new CanceledError();
         }
-        await this.service.updateApiKey(group.vendor, group.groupName, apiKey);
+        await this.service.updateApiKey(group.vendor, group.groupName, apiKey, expectedFingerprint);
         await this.host.pushState();
         return {};
       }

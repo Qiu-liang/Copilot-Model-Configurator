@@ -96,6 +96,29 @@ test('无 payload 的请求接受空对象', () => {
   assert.equal(isRequestFailure(withoutPayload), false);
 });
 
+test('更新分组密钥必须携带快照标识', () => {
+  const missing = parseWebviewRequest({
+    type: 'group/promptApiKey',
+    requestId: 'r-6',
+    payload: { group: { vendor: 'customendpoint', groupName: 'G' } },
+  });
+  assert.equal(isRequestFailure(missing), true);
+  if (isRequestFailure(missing)) {
+    assert.equal(missing.error.code, 'validation');
+  }
+
+  const parsed = parseWebviewRequest({
+    type: 'group/promptApiKey',
+    requestId: 'r-7',
+    payload: { group: { vendor: 'customendpoint', groupName: 'G' }, expectedFingerprint: 'f'.repeat(64) },
+  });
+  assert.equal(isRequestFailure(parsed), false);
+  if (!isRequestFailure(parsed) && parsed.type === 'group/promptApiKey') {
+    assert.equal(parsed.payload.group.groupName, 'G');
+    assert.equal(parsed.payload.expectedFingerprint.length, 64);
+  }
+});
+
 test('请求账本拒绝重复标识', () => {
   const ledger = new RequestLedger();
   assert.equal(ledger.accept('a'), true);

@@ -64,10 +64,17 @@ export function buildImportPreview(
     if (models.length === 0) {
       issues.push({ field: 'models', message: '分组没有任何模型。' });
     }
+    const supportedVendor = isVendorId(vendor);
+    if (!supportedVendor) {
+      issues.push({ field: 'vendor', message: `不支持的提供方“${vendor}”。` });
+    }
     const ids: string[] = [];
     const seen = new Set<string>();
     for (const raw of models) {
-      const record = isVendorId(vendor) ? parseRawModel(raw, vendor, group.name) : undefined;
+      if (!supportedVendor) {
+        continue;
+      }
+      const record = parseRawModel(raw, vendor, group.name);
       if (!record) {
         issues.push({ field: 'id', message: '存在缺少有效 id 的模型，无法导入。' });
         continue;
@@ -78,10 +85,6 @@ export function buildImportPreview(
       }
       seen.add(record.id);
       ids.push(record.id);
-      if (!isVendorId(vendor)) {
-        issues.push({ field: 'vendor', message: `不支持的提供方“${vendor}”。` });
-        continue;
-      }
       const draft = cloneDraft(record);
       const modelIssues = validateDraft(draft, {
         siblingIds: [...seen].filter((id) => id !== record.id),

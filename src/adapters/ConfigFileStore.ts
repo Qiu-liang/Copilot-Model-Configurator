@@ -100,10 +100,23 @@ export class ConfigFileStore {
     const dir = this.backupDirectory();
     await fs.mkdir(dir, { recursive: true });
     const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
-    const backupPath = path.join(dir, `chatLanguageModels-${stamp}.json`);
-    await fs.writeFile(backupPath, text, 'utf8');
-    await pruneBackups(dir, keep);
-    return backupPath;
+    // 同一毫秒内可能连写多份备份（例如凭据写入会先备份再重建），
+    // 用排他创建避免后一份覆盖前一份。
+    for (let suffix = 0; suffix < 100; suffix += 1) {
+      const fileName =
+        suffix === 0 ? `chatLanguageModels-${stamp}.json` : `chatLanguageModels-${stamp}-${suffix}.json`;
+      const backupPath = path.join(dir, fileName);
+      try {
+        await fs.writeFile(backupPath, text, { encoding: 'utf8', flag: 'wx' });
+        await pruneBackups(dir, keep);
+        return backupPath;
+      } catch (error) {
+        if (!isAlreadyExists(error)) {
+          throw error;
+        }
+      }
+    }
+    throw new Error(`备份文件名冲突过多，未能写入 ${dir}。`);
   }
 }
 
@@ -113,6 +126,10 @@ export function asMessage(error: unknown): string {
 
 export function isNotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ENOENT';
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'EEXIST';
 }
 
 async function pruneBackups(dir: string, keep: number): Promise<void> {
