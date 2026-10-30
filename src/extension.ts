@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
   };
 
   const openPanel = (
-    mode: 'open' | 'add' | 'copy',
+    mode: 'open' | 'add' | 'add-group' | 'copy',
     target: { ref?: ModelRef; group?: GroupRef } = {},
   ): void => {
     if (initializationError) {
@@ -95,6 +95,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionApi {
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotModels.open', () => openPanel('open')),
     vscode.commands.registerCommand('copilotModels.add', () => openPanel('add')),
+    vscode.commands.registerCommand('copilotModels.addGroup', () => openPanel('add-group')),
     vscode.commands.registerCommand('copilotModels.openModel', (value?: unknown) => {
       const ref = modelRefOf(value);
       if (!ref) {

@@ -65,7 +65,6 @@ interface FormState {
   nameTouched: boolean;
   inputTouched: boolean;
   urlTouched: boolean;
-  groupMode: 'existing' | 'new';
   customEffortsText: string;
   stale: boolean;
 }
@@ -95,11 +94,26 @@ interface GroupSettingsState {
   error?: string;
 }
 
+interface GroupCreateState {
+  vendor: VendorId;
+  name: string;
+  baseUrl: string;
+  apiType: ApiType;
+  credentialMode: 'apiKey' | 'none';
+  apiKey: string;
+  allowInsecureHttp: boolean;
+  issues: ValidationIssue[];
+  error?: string;
+  saving: boolean;
+  dirty: boolean;
+}
+
 interface AppState {
   snapshot?: ConfigSnapshot;
   selection: Selection;
   form?: FormState;
   groupSettings?: GroupSettingsState;
+  groupCreate?: GroupCreateState;
   busy: boolean;
   busyMessage?: string;
   lastError?: string;
@@ -123,6 +137,7 @@ type PendingPurpose =
   | 'legacy'
   | 'groupKey'
   | 'clearKey'
+  | 'groupCreate'
   | 'groupSave'
   | 'dirty'
   | 'open';
@@ -192,6 +207,9 @@ window.addEventListener('message', (event: MessageEvent<ExtensionMessage>) => {
       break;
     case 'start-create':
       startCreate(message.payload.draft);
+      break;
+    case 'start-create-group':
+      startCreateGroup();
       break;
     case 'start-copy':
       startCopy(message.payload.ref);
@@ -333,6 +351,19 @@ function handleResponse(message: Extract<ExtensionMessage, { type: 'response' }>
       render();
       break;
     }
+    case 'groupCreate': {
+      state.groupCreate = undefined;
+      state.form = undefined;
+      const group = data?.['group'] as GroupRef | undefined;
+      if (group) {
+        state.selection = { kind: 'group', group };
+        const found = findGroup(group.vendor, group.groupName);
+        state.groupSettings = found ? createGroupSettings(found) : undefined;
+      }
+      showToast('info', '分组已创建。');
+      render();
+      break;
+    }
     case 'groupSave': {
       if (state.groupSettings) {
         state.groupSettings.saving = false;
@@ -378,6 +409,28 @@ function handleResponse(message: Extract<ExtensionMessage, { type: 'response' }>
 
 function handleRequestError(error: RequestError, purpose: PendingPurpose | undefined): void {
   resetPendingUi(purpose);
+  if (purpose === 'groupCreate' && state.groupCreate) {
+    state.groupCreate.saving = false;
+    state.groupCreate.dirty = true;
+    state.groupCreate.error = error.message;
+    if (error.issues) {
+      state.groupCreate.issues = error.issues;
+    }
+    if (error.code === 'credential') {
+      const found = findGroup(state.groupCreate.vendor, state.groupCreate.name.trim());
+      if (found) {
+        state.groupCreate = undefined;
+        state.selection = { kind: 'group', group: { vendor: found.vendor, groupName: found.name } };
+        state.groupSettings = createGroupSettings(found);
+        showToast('error', `${error.message} 分组已创建，请稍后重新设置 API Key。`, 7000);
+        render();
+        return;
+      }
+    }
+    showToast('error', error.message, 6200);
+    render();
+    return;
+  }
   if (purpose === 'groupSave' && state.groupSettings) {
     state.groupSettings.saving = false;
     state.groupSettings.error = error.message;
@@ -435,6 +488,9 @@ function resetPendingUi(purpose: PendingPurpose | undefined): void {
   }
   if (purpose === 'groupSave' && state.groupSettings) {
     state.groupSettings.saving = false;
+  }
+  if (purpose === 'groupCreate' && state.groupCreate) {
+    state.groupCreate.saving = false;
   }
   if (
     purpose === 'import' ||
@@ -547,13 +603,10 @@ function validateForm(form: FormState): ValidationIssue[] {
       ? { baseUrl: group.baseUrl, apiType: group.apiType ?? 'chat-completions' }
       : undefined,
   });
-  if (form.mode !== 'edit' && form.groupMode === 'new' && form.draft.groupName.trim()) {
-    const exists = (state.snapshot?.groups ?? []).some(
-      (entry) => entry.vendor === form.draft.vendor && entry.name === form.draft.groupName.trim(),
-    );
-    if (exists) {
-      issues.push({ field: 'groupName', message: '同名分组已存在，请从分组列表中选择它，而不是新建。' });
-    }
+  if (!group) {
+    issues.push({ field: 'groupName', message: '请选择一个已存在的连接分组。' });
+  } else if (!group.baseUrl) {
+    issues.push({ field: 'groupName', message: '该分组尚未设置 API 地址，请先在分组设置中完成。' });
   }
   return issues;
 }
@@ -576,7 +629,6 @@ function createForm(
   draft: ModelDraft,
   options: {
     original?: ModelRef;
-    groupMode: 'existing' | 'new';
     nameTouched: boolean;
     inputTouched: boolean;
   },
@@ -595,7 +647,6 @@ function createForm(
     nameTouched: options.nameTouched,
     inputTouched,
     urlTouched: false,
-    groupMode: options.groupMode,
     customEffortsText: customEffortsFrom(draft),
     stale: false,
   };
@@ -607,30 +658,46 @@ function startCreate(prefill?: ModelDraft): void {
     if (!snapshot) {
       return;
     }
+    const openGroupCreate = (name?: string): void => {
+      const group = createGroupCreateState();
+      if (!group) {
+        return;
+      }
+      if (name?.trim()) {
+        group.name = name.trim();
+      }
+      state.form = undefined;
+      state.groupSettings = undefined;
+      state.selection = { kind: 'none' };
+      state.groupCreate = group;
+      state.lastError = undefined;
+      render();
+      focusField('groupNameCreate');
+    };
     let draft: ModelDraft;
-    let groupMode: 'existing' | 'new';
     if (prefill) {
       const targetGroup = findGroup(prefill.vendor, prefill.groupName.trim());
+      if (!targetGroup) {
+        openGroupCreate(prefill.groupName);
+        return;
+      }
       draft = {
         ...prefill,
         apiKey: undefined,
         // 认证方式跟随目标分组：分组没有凭据时即为无认证。
-        credentialMode: targetGroup && !targetGroup.hasApiKey ? 'none' : 'apiKey',
+        credentialMode: targetGroup.hasApiKey ? 'apiKey' : 'none',
       };
-      groupMode = targetGroup ? 'existing' : 'new';
     } else {
       const lastGroup = snapshot.groups.at(-1);
-      if (lastGroup) {
-        draft = createEmptyDraft(lastGroup.vendor, lastGroup.name);
-        groupMode = 'existing';
-      } else {
-        draft = createEmptyDraft(snapshot.preferredVendor, '');
-        draft.groupName = uniqueGroupName(snapshot.preferredVendor, 'My Provider');
-        groupMode = 'new';
+      if (!lastGroup) {
+        openGroupCreate();
+        return;
       }
+      draft = createEmptyDraft(lastGroup.vendor, lastGroup.name);
+      draft.credentialMode = lastGroup.hasApiKey ? 'apiKey' : 'none';
     }
+    state.groupCreate = undefined;
     state.form = createForm('create', draft, {
-      groupMode,
       nameTouched: false,
       inputTouched: false,
     });
@@ -650,8 +717,8 @@ function startCopy(ref: ModelRef): void {
     }
     const siblingIds = found.group.models.map((model) => model.id);
     const draft = createCopyDraft(found.model, siblingIds);
+    state.groupCreate = undefined;
     state.form = createForm('copy', draft, {
-      groupMode: 'existing',
       nameTouched: true,
       inputTouched: true,
     });
@@ -672,9 +739,9 @@ function startEdit(ref: ModelRef, skipGuard = false): void {
       render();
       return;
     }
+    state.groupCreate = undefined;
     state.form = createForm('edit', cloneDraft(found.model), {
       original: ref,
-      groupMode: 'existing',
       nameTouched: true,
       inputTouched: true,
     });
@@ -697,6 +764,7 @@ function selectGroup(group: GroupRef): void {
       return;
     }
     state.form = undefined;
+    state.groupCreate = undefined;
     state.selection = { kind: 'group', group };
     state.groupSettings = createGroupSettings(found);
     state.lastError = undefined;
@@ -714,6 +782,114 @@ function createGroupSettings(group: ProviderGroup): GroupSettingsState {
     dirty: false,
     saving: false,
   };
+}
+
+function createGroupCreateState(): GroupCreateState | undefined {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return undefined;
+  }
+  const vendor = snapshot.preferredVendor;
+  return {
+    vendor,
+    name: uniqueGroupName(vendor, 'My Provider'),
+    baseUrl: '',
+    apiType: 'chat-completions',
+    credentialMode: 'apiKey',
+    apiKey: '',
+    allowInsecureHttp: false,
+    issues: [],
+    saving: false,
+    dirty: false,
+  };
+}
+
+function startCreateGroup(): void {
+  withDiscardGuard(() => {
+    const group = createGroupCreateState();
+    if (!group) {
+      return;
+    }
+    state.form = undefined;
+    state.groupSettings = undefined;
+    state.selection = { kind: 'none' };
+    state.groupCreate = group;
+    state.lastError = undefined;
+    render();
+    focusField('groupNameCreate');
+  });
+}
+
+function closeGroupCreate(): void {
+  withDiscardGuard(() => {
+    state.groupCreate = undefined;
+    state.lastError = undefined;
+    render();
+  });
+}
+
+function validateGroupCreate(form: GroupCreateState): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const name = form.name.trim();
+  if (!name) {
+    issues.push({ field: 'groupName', message: '请填写分组名称。' });
+  } else if (name.length > 80) {
+    issues.push({ field: 'groupName', message: '分组名称不能超过 80 个字符。' });
+  } else if (
+    (state.snapshot?.groups ?? []).some(
+      (group) => group.vendor === form.vendor && group.name === name,
+    )
+  ) {
+    issues.push({ field: 'groupName', message: '同名分组已存在，请换一个名称。' });
+  }
+  issues.push(...validateGroupEndpoint(form.baseUrl, form.apiType, form.allowInsecureHttp));
+  if (form.credentialMode === 'apiKey' && !form.apiKey.trim()) {
+    issues.push({ field: 'apiKey', message: '请填写 API Key，或选择“无需认证”。' });
+  }
+  return issues;
+}
+
+function saveGroupCreate(): void {
+  const form = state.groupCreate;
+  const snapshot = state.snapshot;
+  if (!form || !snapshot || form.saving) {
+    return;
+  }
+  if (!snapshot.writeEnabled) {
+    showToast('error', '当前配置不可写，请先修复配置文件或使用官方模型管理。');
+    return;
+  }
+  const issues = validateGroupCreate(form);
+  const errors = issues.filter((issue) => issue.severity !== 'warning');
+  form.issues = issues;
+  if (errors.length > 0) {
+    form.error = errors.map((issue) => issue.message).join('；');
+    form.dirty = true;
+    render();
+    return;
+  }
+  if (form.credentialMode === 'apiKey' && !snapshot.credentialWriteEnabled) {
+    showToast('error', '当前 VS Code/Copilot 版本不支持写入 API Key，请选择“无需认证”后重试。');
+    return;
+  }
+  form.error = undefined;
+  form.saving = true;
+  form.dirty = true;
+  render();
+  send(
+    'group/create',
+    {
+      vendor: form.vendor,
+      name: form.name.trim(),
+      baseUrl: normalizeBaseUrl(form.baseUrl),
+      apiType: form.apiType,
+      allowInsecureHttp: form.allowInsecureHttp,
+      credentialMode: form.credentialMode,
+      apiKey: form.credentialMode === 'apiKey' ? form.apiKey.trim() : undefined,
+      expectedFingerprint: snapshot.fingerprint,
+    },
+    'groupCreate',
+  );
 }
 
 function currentGroup(): ProviderGroup | undefined {
@@ -751,13 +927,13 @@ function withDiscardGuard(action: () => void): void {
     }
     action();
   };
-  if (!state.form?.dirty) {
+  if (!state.form?.dirty && !state.groupCreate?.dirty) {
     run();
     return;
   }
   openDialog({
     kind: 'discard',
-    message: '当前表单有未保存的修改，继续将放弃这些修改。',
+    message: '当前页面有未保存的修改，继续将放弃这些修改。',
     onConfirm: () => {
       closeDialog();
       run();
@@ -928,7 +1104,7 @@ function cleanDraft(draft: ModelDraft): ModelDraft {
 }
 
 function updateDirtySignal(): void {
-  const dirty = Boolean(state.form?.dirty);
+  const dirty = Boolean(state.form?.dirty || state.groupCreate?.dirty);
   if (dirty === lastDirtySignaled) {
     return;
   }
@@ -1058,6 +1234,10 @@ function renderMoreMenu(): HTMLElement {
 
 function renderContent(): HTMLElement {
   const content = el('main', { class: 'content', id: 'content' });
+  if (state.groupCreate) {
+    content.append(renderGroupCreatePage(state.groupCreate));
+    return content;
+  }
   if (state.form) {
     content.append(renderFormPage(state.form));
     return content;
@@ -1133,6 +1313,190 @@ function renderWelcome(): HTMLElement {
       '提示：思考强度的最终选择由 Copilot 模型选择器按会话保存；面板声明模型支持哪些档位。连接测试只在手动触发时发送请求。',
     ),
   );
+  return wrapper;
+}
+
+function renderGroupCreatePage(form: GroupCreateState): HTMLElement {
+  const wrapper = el('div', {});
+  const head = el('div', { class: 'page-head' });
+  const titles = el('div', {});
+  titles.append(el('h2', {}, '新建连接分组'));
+  titles.append(
+    el('div', { class: 'meta-line' }, `${vendorLabel(form.vendor)} · 分组是接口地址与凭据的单位`),
+  );
+  head.append(titles);
+  wrapper.append(head);
+
+  const snapshot = state.snapshot;
+  if (!snapshot?.writeEnabled) {
+    wrapper.append(
+      banner('error', '配置不可写', snapshot?.adapterMessage ?? '配置文件无法读取或解析，保存已禁用。'),
+    );
+  } else if (form.credentialMode === 'apiKey' && !snapshot.credentialWriteEnabled) {
+    wrapper.append(
+      banner(
+        'warn',
+        'API Key 写入受限',
+        '当前 VS Code/Copilot 版本不支持通过内部命令保存 API Key。请选择“无需认证”，或在分组设置中稍后设置凭据。',
+      ),
+    );
+  }
+  if (form.error) {
+    wrapper.append(banner('error', '无法创建分组', form.error));
+  }
+
+  const formElement = el('form', { class: 'model-form', novalidate: 'novalidate' });
+  formElement.addEventListener('submit', (event) => event.preventDefault());
+  const fieldset = el('fieldset', {});
+  fieldset.append(el('legend', {}, '分组信息'));
+
+  const vendors = snapshot?.vendorInfo ?? [];
+  if (vendors.length > 1) {
+    fieldset.append(
+      field(
+        '提供方',
+        'groupVendor',
+        select(
+          vendors.map((info) => [info.vendor, `${info.label}${info.available ? '' : '（当前不可用）'}`]),
+          form.vendor,
+          (value) => {
+            form.vendor = value as VendorId;
+            form.dirty = true;
+            form.issues = [];
+            render();
+          },
+        ),
+        'Custom Endpoint 是当前推荐提供方；已弃用提供方仅用于兼容旧配置。',
+      ),
+    );
+  }
+
+  const nameInput = input('text', form.name, (value) => {
+    form.name = value;
+    form.dirty = true;
+  }, { placeholder: '例如：My Provider', required: true });
+  fieldset.append(
+    field('分组名称', 'groupNameCreate', nameInput, '同一提供方下不能重名；左侧模型树按此名称分组。', 'groupName'),
+  );
+
+  const baseUrlInput = input('text', form.baseUrl, (value) => {
+    form.baseUrl = value;
+    form.dirty = true;
+  }, { placeholder: 'https://api.example.com/v1', required: true, spellcheck: 'false' });
+  fieldset.append(
+    field(
+      'API 地址（Base URL）',
+      'groupBaseUrl',
+      baseUrlInput,
+      '保存时会按 API 类型拼接 /chat/completions、/responses 或 /messages；不要填写完整端点。',
+      'baseUrl',
+    ),
+  );
+
+  const info = vendorInfo(form.vendor);
+  if (info?.supportsModelApiType ?? form.vendor === 'customendpoint') {
+    fieldset.append(
+      field(
+        'API 类型',
+        'groupApiType',
+        select(
+          [
+            ['chat-completions', 'Chat Completions'],
+            ['responses', 'Responses'],
+            ['messages', 'Messages（Anthropic 兼容）'],
+          ],
+          form.apiType,
+          (value) => {
+            form.apiType = value as ApiType;
+            form.dirty = true;
+          },
+        ),
+        '同一分组的模型共用该类型；地址在保存时按此类型派生。',
+        'apiType',
+      ),
+    );
+  }
+
+  const authBlock = el('div', { class: 'field' });
+  authBlock.append(el('div', { class: 'label-like' }, '认证方式'));
+  authBlock.append(
+    radio(
+      'group-credential',
+      'apiKey',
+      form.credentialMode === 'apiKey',
+      () => {
+        form.credentialMode = 'apiKey';
+        form.dirty = true;
+        form.issues = [];
+        render();
+      },
+      '使用 API Key',
+    ),
+    radio(
+      'group-credential',
+      'none',
+      form.credentialMode === 'none',
+      () => {
+        form.credentialMode = 'none';
+        form.apiKey = '';
+        form.dirty = true;
+        form.issues = [];
+        render();
+      },
+      '无需认证（本地或受信任服务）',
+    ),
+  );
+  fieldset.append(authBlock);
+
+  if (form.credentialMode === 'apiKey') {
+    fieldset.append(
+      field(
+        'API Key',
+        'groupApiKey',
+        input('password', form.apiKey, (value) => {
+          form.apiKey = value;
+          form.dirty = true;
+        }, { placeholder: '输入该分组使用的 API Key', autocomplete: 'off' }),
+        '只保存在本机 VS Code 密钥存储中；不会写入配置文件、导出内容或日志。',
+        'apiKey',
+      ),
+    );
+  }
+
+  fieldset.append(
+    check(
+      '允许向非本机 http 地址发送凭据',
+      form.allowInsecureHttp,
+      (value) => {
+        form.allowInsecureHttp = value;
+        form.dirty = true;
+        form.issues = [];
+        render();
+      },
+      'http 会明文传输 API Key。仅在可信内网且无法使用 https 时开启。',
+    ),
+  );
+
+  if (form.baseUrl.trim()) {
+    const preview = resolveRequestUrl(normalizeBaseUrl(form.baseUrl), form.apiType);
+    fieldset.append(el('div', { class: 'hint' }, `示例请求地址：${preview}`));
+  }
+
+  formElement.append(fieldset);
+  wrapper.append(formElement);
+
+  const footer = el('footer', { class: 'footer', 'aria-label': '分组操作' });
+  footer.append(
+    button('取消', () => closeGroupCreate(), { disabled: form.saving }),
+    button(form.saving ? '正在创建…' : '创建分组', () => saveGroupCreate(), {
+      class: 'primary',
+      disabled:
+        form.saving ||
+        !snapshot?.writeEnabled ||
+        (form.credentialMode === 'apiKey' && !snapshot?.credentialWriteEnabled),
+    }),
+  );
+  wrapper.append(footer);
   return wrapper;
 }
 
@@ -1428,29 +1792,9 @@ function renderBasics(form: FormState): HTMLElement {
   const fieldset = el('fieldset', {});
   fieldset.append(el('legend', {}, '基础信息'));
   const draft = form.draft;
-  const snapshot = state.snapshot;
   const editing = form.mode === 'edit';
+  const groups = state.snapshot?.groups ?? [];
 
-  if (!editing && form.groupMode === 'new') {
-    const vendorOptions = (snapshot?.vendorInfo ?? []).map<[string, string]>((info) => [
-      info.vendor,
-      `${info.label}${info.available ? '' : '（当前不可用）'}`,
-    ]);
-    if (vendorOptions.length > 1) {
-      fieldset.append(
-        field(
-          '模型提供方',
-          'vendor',
-          select(vendorOptions, draft.vendor, (value) => {
-            updateDraft({ vendor: value as VendorId }, { render: true });
-          }),
-          'Custom Endpoint 是当前推荐提供方；已弃用提供方仅用于兼容旧配置。',
-        ),
-      );
-    }
-  }
-
-  const groups = snapshot?.groups ?? [];
   if (editing) {
     fieldset.append(
       field(
@@ -1460,33 +1804,24 @@ function renderBasics(form: FormState): HTMLElement {
         '编辑时不能更换分组，避免产生重复模型。如需迁移，请新建模型后删除旧条目。',
       ),
     );
+  } else if (groups.length === 0) {
+    fieldset.append(
+      banner('warn', '还没有连接分组', '请先在左侧活动栏使用“添加分组”创建接口配置。'),
+    );
   } else {
     const options: [string, string][] = groups.map((group) => [
       groupKey(group.vendor, group.name),
       `${group.name} · ${vendorLabel(group.vendor)}`,
     ]);
-    options.push(['__new__', '＋ 新建分组…']);
-    const currentValue =
-      form.groupMode === 'existing' ? groupKey(draft.vendor, draft.groupName) : '__new__';
     fieldset.append(
       field(
         '连接分组',
         'groupName',
-        select(options, currentValue, (value) => {
-          if (value === '__new__') {
-            form.groupMode = 'new';
-            const base =
-              draft.groupName && !findGroup(draft.vendor, draft.groupName.trim())
-                ? draft.groupName
-                : 'My Provider';
-            updateDraft({ groupName: uniqueGroupName(draft.vendor, base) }, { render: true });
-            return;
-          }
+        select(options, groupKey(draft.vendor, draft.groupName), (value) => {
           const group = groups.find((entry) => groupKey(entry.vendor, entry.name) === value);
           if (!group) {
             return;
           }
-          form.groupMode = 'existing';
           updateDraft(
             {
               vendor: group.vendor,
@@ -1498,28 +1833,27 @@ function renderBasics(form: FormState): HTMLElement {
           );
         }),
         '同一分组的模型共享 API 地址、API 类型与 API Key。不同服务账号或接口地址请使用不同分组。',
-        form.groupMode === 'new' ? 'groupNameSelect' : 'groupName',
       ),
     );
-    if (form.groupMode === 'new') {
-      const nameInput = input('text', draft.groupName, (value) => {
-        updateDraft({ groupName: value });
-      }, { placeholder: '例如：My Provider', required: true });
-      nameInput.addEventListener('change', () => {
-        updateDraft({}, { render: true });
-      });
-      fieldset.append(
-        field('新分组名称', 'groupNameNew', nameInput, '新分组会与已有分组并列；同名分组请直接从上方列表选择。', 'groupName'),
-      );
-    }
   }
 
   const targetGroup = findGroup(draft.vendor, draft.groupName.trim());
-  const groupManaged = form.groupMode === 'existing' && Boolean(targetGroup?.baseUrl);
-  if (groupManaged && targetGroup) {
+  if (targetGroup?.baseUrl) {
     fieldset.append(renderInheritedEndpoint(targetGroup));
   } else {
-    fieldset.append(renderGroupEndpointFields(form));
+    const endpoint = el('div', { class: 'field' });
+    endpoint.append(el('div', { class: 'label-like' }, '接口（未配置）'));
+    endpoint.append(
+      el('div', { class: 'hint' }, '该分组还没有 API 地址和 API 类型，请先在分组设置中完成。'),
+    );
+    if (targetGroup) {
+      endpoint.append(
+        button('打开分组设置', () => selectGroup({ vendor: targetGroup.vendor, groupName: targetGroup.name }), {
+          class: 'link',
+        }),
+      );
+    }
+    fieldset.append(endpoint);
   }
 
   const idInput = input('text', draft.id, (value) => updateDraft({ id: value }), {
@@ -1536,48 +1870,6 @@ function renderBasics(form: FormState): HTMLElement {
   return fieldset;
 }
 
-/** 新建分组（或旧分组还没有统一地址）时，地址、类型与凭据都在这里一次填好。 */
-function renderGroupEndpointFields(form: FormState): HTMLElement {
-  const draft = form.draft;
-  const block = el('fieldset', {});
-  block.append(el('legend', {}, form.groupMode === 'new' ? '新分组设置' : '分组接口设置'));
-
-  const urlInput = input('text', draft.url, (value) => updateDraft({ url: value }), {
-    placeholder: 'https://api.example.com/v1',
-    required: true,
-    spellcheck: 'false',
-  });
-  urlInput.addEventListener('change', () => {
-    form.urlTouched = true;
-    refreshValidation();
-    updateFooter();
-  });
-  block.append(field('分组 API 地址', 'url', urlInput, urlHint(draft), undefined, 'hint-url'));
-
-  const info = vendorInfo(draft.vendor);
-  if (info?.supportsModelApiType ?? draft.vendor === 'customendpoint') {
-    block.append(
-      field(
-        '分组 API 类型',
-        'apiType',
-        select(
-          [
-            ['chat-completions', 'Chat Completions'],
-            ['responses', 'Responses'],
-            ['messages', 'Messages（Anthropic 兼容）'],
-          ],
-          draft.apiType,
-          (value) => updateDraft({ apiType: value as ModelDraft['apiType'] }),
-        ),
-        '同一分组的模型共用该类型；保存时会写入分组并据此拼接每个模型的地址。',
-      ),
-    );
-  }
-
-  block.append(renderCredentialFields(form));
-  return block;
-}
-
 /** 已有分组：只展示继承来的接口，修改入口在分组设置页。 */
 function renderInheritedEndpoint(group: ProviderGroup): HTMLElement {
   const block = el('div', { class: 'field' });
@@ -1590,59 +1882,6 @@ function renderInheritedEndpoint(group: ProviderGroup): HTMLElement {
       class: 'link',
     }),
   );
-  return block;
-}
-
-function renderCredentialFields(form: FormState): HTMLElement {
-  const draft = form.draft;
-  const group = findGroup(draft.vendor, draft.groupName.trim());
-  const hasCredential = group?.hasApiKey ?? false;
-  const block = el('div', { class: 'field' });
-  block.append(el('div', { class: 'label-like' }, '认证方式'));
-  block.append(
-    el(
-      'div',
-      { class: 'hint' },
-      hasCredential
-        ? '该分组已保存凭据。留空表示继续使用原 Key，密钥永远不会回显到面板。'
-        : draft.credentialMode === 'none'
-          ? '该分组没有保存凭据，模型将以无认证方式调用；需要鉴权时请改用“使用 API Key”。'
-          : '该分组还没有凭据：请输入 API Key，或明确选择“无需认证”。',
-    ),
-  );
-
-  const keyRadio = radio(
-    'credential-mode',
-    'apiKey',
-    draft.credentialMode !== 'none',
-    () => updateDraft({ credentialMode: 'apiKey' }, { render: true }),
-    '使用 API Key',
-  );
-  const noneRadio = radio(
-    'credential-mode',
-    'none',
-    draft.credentialMode === 'none',
-    () => updateDraft({ credentialMode: 'none', apiKey: undefined }, { render: true }),
-    '无需认证（本地或受信任服务）',
-    hasCredential ? '该分组已有凭据；如需无认证，请先在分组设置中清除分组凭据。' : undefined,
-    hasCredential,
-  );
-  block.append(keyRadio, noneRadio);
-
-  if (draft.credentialMode !== 'none') {
-    block.append(
-      field(
-        hasCredential ? 'API Key（留空则不修改）' : 'API Key',
-        'apiKey',
-        input('password', draft.apiKey ?? '', (value) => updateDraft({ apiKey: value }), {
-          placeholder: hasCredential ? '已配置，留空保留原凭据' : '本地服务可留空并选择“无需认证”',
-          autocomplete: 'off',
-        }),
-        '只在本机 VS Code 密钥存储中保存；不会写入导出文件或日志。',
-      ),
-    );
-  }
-  block.append(el('div', { id: 'msgs-credentialMode', class: 'field-messages' }));
   return block;
 }
 
@@ -1833,20 +2072,6 @@ function renderAdvanced(form: FormState): HTMLElement {
   details.append(el('summary', {}, '高级设置'));
   const draft = form.draft;
   const group = findGroup(draft.vendor, draft.groupName.trim());
-  const groupManaged = form.groupMode === 'existing' && Boolean(group?.baseUrl);
-
-  if (!groupManaged) {
-    const insecureBlock = el('div', { class: 'advanced-block' });
-    insecureBlock.append(
-      check(
-        '允许向非本机 http 地址发送凭据',
-        draft.allowInsecureHttp ?? false,
-        (value) => updateDraft({ allowInsecureHttp: value }),
-        'http 会明文传输 API Key。仅在可信内网且无法使用 https 时开启。',
-      ),
-    );
-    details.append(insecureBlock);
-  }
 
   const previewBlock = el('div', { class: 'advanced-block' });
   previewBlock.append(el('div', { class: 'hint' }, '即将写入的模型对象（不含 API Key）：'));
@@ -2501,9 +2726,10 @@ function focusDialog(): void {
 
 function startCreateInGroup(group: ProviderGroup): void {
   const draft = createEmptyDraft(group.vendor, group.name);
+  draft.credentialMode = group.hasApiKey ? 'apiKey' : 'none';
   withDiscardGuard(() => {
+    state.groupCreate = undefined;
     state.form = createForm('create', draft, {
-      groupMode: 'existing',
       nameTouched: false,
       inputTouched: false,
     });
@@ -2657,7 +2883,7 @@ function field(
   const messages = el('div', { class: 'field-messages', id: `msgs-${name}` });
   const issues = state.form
     ? visibleIssues(state.form).filter((issue) => issue.field === key)
-    : [];
+    : (state.groupCreate?.issues ?? []).filter((issue) => issue.field === key);
   for (const issue of issues) {
     messages.append(issueNode(issue));
   }

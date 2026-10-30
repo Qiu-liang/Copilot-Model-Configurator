@@ -263,6 +263,54 @@ export class ModelConfigService {
     });
   }
 
+  async createGroup(
+    vendorInput: VendorId,
+    nameInput: string,
+    baseUrlInput: string,
+    apiType: ApiType,
+    allowInsecureHttp: boolean,
+    credential: { mode: 'apiKey'; apiKey: string } | { mode: 'none' },
+    expectedFingerprint: string,
+  ): Promise<ConfigSnapshot> {
+    const vendor = this.resolveVendor(vendorInput);
+    const name = nameInput.trim();
+    const issues: ValidationIssue[] = [];
+    if (!name) {
+      issues.push({ field: 'groupName', message: '请填写分组名称。' });
+    } else if (name.length > 80) {
+      issues.push({ field: 'groupName', message: '分组名称不能超过 80 个字符。' });
+    }
+    issues.push(...validateGroupEndpoint(baseUrlInput, apiType, allowInsecureHttp));
+    const secret = credential.mode === 'apiKey' ? credential.apiKey.trim() : '';
+    if (credential.mode === 'apiKey' && !secret) {
+      issues.push({ field: 'apiKey', message: '请填写 API Key，或选择“无需认证”。' });
+    }
+    if (issues.some((issue) => issue.severity !== 'warning')) {
+      throw new ValidationFailure(issues);
+    }
+
+    return this.enqueueWrite(async () => {
+      this.assertAvailable();
+      const raw = await this.adapter.read();
+      this.assertFingerprint(raw.text, expectedFingerprint);
+      if (findGroup(raw.groups, vendor, name)) {
+        throw new ValidationFailure([{ field: 'groupName', message: '同名分组已存在，请换一个名称。' }]);
+      }
+
+      const groups = cloneGroups(raw.groups);
+      const target: RawGroup = { name, vendor, models: [] };
+      applyGroupEndpoint(target, baseUrlInput, apiType);
+      groups.push(target);
+
+      if (secret) {
+        await this.adapter.writeWithCredential(raw, groups, vendor, name, secret);
+      } else {
+        await this.adapter.writeGroups(raw, groups);
+      }
+      return this.reload();
+    });
+  }
+
   async deleteModel(ref: ModelRef, expectedFingerprint: string): Promise<ConfigSnapshot> {
     return this.enqueueWrite(async () => {
       this.assertAvailable();

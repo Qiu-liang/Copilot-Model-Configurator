@@ -37,6 +37,7 @@ const BUSY_MESSAGES: Partial<Record<RequestType, string>> = {
   'legacy/import': '正在导入旧版设置…',
   'group/promptApiKey': '正在保存 API Key…',
   'group/clearApiKey': '正在清除分组凭据…',
+  'group/create': '正在创建分组…',
   'group/save': '正在保存分组设置…',
 };
 
@@ -138,6 +139,21 @@ export class MessageController {
           await this.host.pushState();
         }
         return {};
+      }
+      case 'group/create': {
+        const { vendor, name, baseUrl, apiType, allowInsecureHttp, credentialMode, apiKey, expectedFingerprint } =
+          request.payload;
+        await this.service.createGroup(
+          vendor,
+          name,
+          baseUrl,
+          apiType,
+          allowInsecureHttp,
+          credentialMode === 'apiKey' ? { mode: 'apiKey', apiKey: apiKey ?? '' } : { mode: 'none' },
+          expectedFingerprint,
+        );
+        await this.host.pushState();
+        return { group: { vendor, groupName: name.trim() } };
       }
       case 'group/save': {
         const { group, baseUrl, apiType, allowInsecureHttp, expectedFingerprint } = request.payload;

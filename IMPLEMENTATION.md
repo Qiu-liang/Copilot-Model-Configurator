@@ -6,23 +6,24 @@
 
 ### 命令与入口
 
-- `copilotModels.open` / `copilotModels.add`：打开模型管理面板或直接进入新增流程。
+- `copilotModels.open` / `copilotModels.addGroup` / `copilotModels.add`：打开模型管理面板、打开独立添加分组页，或直接进入新增模型流程。
 - `copilotModels.openModel` / `copilotModels.copyModel` / `copilotModels.openGroup`：从侧边栏树打开模型、复制模型、打开分组设置。
 - `copilotModels.deleteModel`：侧边栏右键删除，带确认。
 - 树命令的实参有两种来源：`TreeItem.command.arguments` 传显式 ref，`view/item/context` 内联按钮传树元素实例。四个树命令统一用 `models/refs.ts` 的 `modelRefOf` / `groupRefOf` 归一化后再执行。
 - `copilotModels.refresh` / `copilotModels.export` / `copilotModels.importLegacy`。
 - `copilotModels.openConfigFile` / `copilotModels.openBackups` / `copilotModels.openLegacySetting` / `copilotModels.openDashboard`。
-- 活动栏“Copilot 模型”视图展示分组/模型树，视图标题按钮提供打开面板、添加模型和刷新。
-- 面板只显示欢迎页、编辑表单或分组设置，不再重复渲染模型列表；点击树中的模型或分组会定向打开面板。
+- 活动栏“Copilot 模型”视图展示分组/模型树；视图标题按钮提供打开面板、添加分组、添加模型和刷新，空状态欢迎页也提供添加分组/模型链接。原生树空白区域右键受 VS Code 限制。
+- 面板只显示欢迎页、添加分组页、编辑表单或分组设置，不再重复渲染模型列表；点击树中的模型或分组会定向打开面板。
 - 面板“更多”菜单提供导入、导出、旧版导入、打开配置文件/备份目录/旧设置和官方模型管理。
 
 ### 模型管理
 
 - 新增、编辑、复制、删除模型；删除最后一个模型时保留空分组与凭据，避免隐式删除凭据。
 - 分组是接口配置单位：分组设置页统一维护 API 地址（`baseUrl`）、API 类型（`apiType`）、API Key，并可新增模型、清除凭据引用、删除分组、打开 JSON 配置。
-- 模型表单只保留模型自身字段（ID、显示名称、上下文、能力、思考强度）；已有分组的接口以只读方式展示并提供“打开分组设置”。新建分组时在同一次保存中填写分组地址/类型/Key。
+- 独立的添加分组页收集分组名称、提供方、API 地址、API 类型、认证方式与 API Key；保存后创建空分组并显示该分组设置页。
+- 模型表单只保留模型自身字段（ID、显示名称、上下文、能力、思考强度）；只允许选择已有分组，接口以只读方式展示并提供“打开分组设置”。新建分组不再嵌入模型表单。
 - 保存模型时按分组 `baseUrl + apiType` 派生 `url` 并删除模型级 `apiType`；保存分组设置时批量重写该分组全部模型地址。
-- 表单字段：提供方、连接分组（已有/新建）、模型 ID、显示名称、总上下文窗口、最大输入/输出 Tokens、工具调用、视觉、流式、思考能力、支持强度、默认强度、强度参数格式；新建分组额外包含分组 API 地址/类型/Key 与不安全 http 确认。
+- 表单字段：连接分组（仅已有）、模型 ID、显示名称、总上下文窗口、最大输入/输出 Tokens、工具调用、视觉、流式、思考能力、支持强度、默认强度、强度参数格式；分组接口与凭据由添加分组页/分组设置页维护。
 - 模型 ID 与显示名称在用户未手动修改名称时自动同步；总窗口/输出变化时自动换算输入，手动编辑输入后停止自动跟随，可一键恢复自动换算。
 - 思考开启状态由 `thinking` 或非空 `supportsReasoningEffort` 任一存在推导（二者互不覆盖）；关闭时清空强度字段；默认强度必须属于支持列表；目标版本不支持默认强度时只给出警告并提示到模型选择器设置。开启但未选强度时只写原生 `thinking`，并以警告提示不会显示强度选择器。
 - 高级设置包含即将写入的模型 JSON 预览（不含密钥）、分组凭据入口、配置/备份/旧设置入口。
@@ -74,7 +75,7 @@ src/
 └── webview/
     ├── index.html                      # Webview 模板（CSP 占位符）
     ├── styles.css                      # VS Code 主题变量、响应式布局
-    └── main.ts                         # 列表、分组设置、表单、导入预览、对话框
+    └── main.ts                         # 添加分组、分组设置、表单、导入预览、对话框
 ```
 
 ### 2.1 唯一读写边界
@@ -143,6 +144,7 @@ interface ExtensionResponse {
 | `config/save` | 校验、合并、写入、回读 |
 | `config/delete` | 删除模型并回读 |
 | `config/deleteGroup` | 删除分组并回读 |
+| `group/create` | 创建空分组并写入 baseUrl/apiType，可选写入 API Key |
 | `group/save` | 保存分组统一接口（baseUrl/apiType）并批量重写模型地址 |
 | `group/promptApiKey` | 用 VS Code 输入框收集密钥并重建分组 |
 | `group/clearApiKey` | 清除分组凭据引用（单独确认） |
@@ -155,7 +157,7 @@ interface ExtensionResponse {
 
 - `RequestLedger` 拒绝重复 `requestId`，防止重复保存/删除等重放。
 - 未知消息类型、非法字段和伪造 payload 在 `MessageController` 统一拒绝。
-- 密钥只出现在新增/编辑表单的保存或测试请求中；更新分组密钥使用 VS Code 输入框，不进入 Webview。
+- 密钥只出现在添加分组页、新增/编辑表单的保存或测试请求中；更新已有分组密钥使用 VS Code 输入框，不进入 Webview。
 - 错误和日志经过 `redact.ts`，移除已知密钥、Bearer token、`sk-` 形式和敏感查询参数。
 
 ## 4. 安全措施
@@ -217,7 +219,7 @@ npm run test:integration   # 真实 VS Code 集成测试（使用本地安装的
 VSCODE_EXECUTABLE="/Applications/Visual Studio Code.app/Contents/MacOS/Code" npm run test:integration
 ```
 
-Webview 还使用本地静态夹具做过渲染验收：列表/分组设置/编辑表单/新增表单/导入预览/放弃修改对话框、窄屏单列导航、固定操作区、上下文自动换算、URL 失焦校验、连接测试结果与错误汇总均已人工检查。
+Webview 还使用本地静态夹具做过渲染验收：添加分组页/分组设置/编辑表单/新增表单/导入预览/放弃修改对话框、窄屏单列导航、固定操作区、上下文自动换算、URL 失焦校验、连接测试结果与错误汇总均已人工检查。
 
 ## 7. 已知限制
 
@@ -239,4 +241,5 @@ Webview 还使用本地静态夹具做过渲染验收：列表/分组设置/编�
 5. 输入新 API Key，确认文件仍是 `${input:...}` 引用且面板不回显。
 6. 在编辑器中手动修改配置后尝试保存，确认出现冲突提示而不是覆盖。
 7. 导出后检查文件不含 `apiKey`，导入预览确认后再写入。
-8. 缩窄窗口，确认列表与表单切换为单列导航，底部操作区仍可达。
+8. 在视图标题栏点击“添加分组”，创建空分组；再在该分组下新增模型，确认树与面板同步。
+9. 缩窄窗口，确认分组创建页、表单和分组设置可用，底部操作区仍可达。

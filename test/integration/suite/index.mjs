@@ -27,6 +27,7 @@ export async function run() {
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes('lm.migrateLanguageModelsProviderGroup'), '缺少官方分组命令');
   assert.ok(commands.includes('copilotModels.open'), '扩展命令未注册');
+  assert.ok(commands.includes('copilotModels.addGroup'), '添加分组命令未注册');
 
   assert.ok(extension, '扩展未加载');
   const api = extension.isActive ? extension.exports : await extension.activate();
@@ -352,7 +353,27 @@ export async function run() {
   assert.equal(fs.readFileSync(configPath, 'utf8'), beforeKeyUpdateText, '密钥写入失败不得改动配置');
   assert.equal(fs.readFileSync(configPath, 'utf8').includes('hostless-key-456'), false);
 
-  // 17) 侧边栏内联按钮传入的是树元素而非模型记录：命令必须能按 ref 定位并删除。
+  // 17) 独立添加分组页面依赖的创建空分组路径（无认证）。
+  const beforeCreateGroup = await service.reload();
+  const createdSnapshot = await service.createGroup(
+    'customendpoint',
+    'CreatedGroup',
+    'https://created.example.com/v1',
+    'chat-completions',
+    false,
+    { mode: 'none' },
+    beforeCreateGroup.fingerprint,
+  );
+  const createdGroup = createdSnapshot.groups.find(
+    (group) => group.vendor === 'customendpoint' && group.name === 'CreatedGroup',
+  );
+  assert.ok(createdGroup, '空分组应被创建');
+  assert.equal(createdGroup.models.length, 0);
+  assert.equal(createdGroup.baseUrl, 'https://created.example.com/v1');
+  assert.equal(createdGroup.apiType, 'chat-completions');
+  assert.equal(createdGroup.hasApiKey, false);
+
+  // 18) 侧边栏内联按钮传入的是树元素而非模型记录：命令必须能按 ref 定位并删除。
   const settings = vscode.workspace.getConfiguration('copilotModelManager');
   await settings.update('confirmBeforeDelete', false, vscode.ConfigurationTarget.Global);
   const beforeInline = await service.reload();
@@ -393,6 +414,6 @@ export async function run() {
   );
   await settings.update('confirmBeforeDelete', undefined, vscode.ConfigurationTarget.Global);
 
-  console.log('集成用例全部通过（含侧边栏树元素 ref 回归）');
+  console.log('集成用例全部通过（含空分组创建与侧边栏树元素 ref 回归）');
   fs.writeFileSync(configPath, JSON.stringify(original, null, '\t') + '\n', 'utf8');
 }

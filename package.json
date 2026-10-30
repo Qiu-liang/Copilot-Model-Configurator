@@ -43,6 +43,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "copilotModels.addGroup",
+        "title": "添加连接分组",
+        "category": "Copilot 模型",
+        "icon": "$(new-folder)"
+      },
+      {
         "command": "copilotModels.openModel",
         "title": "编辑模型",
         "category": "Copilot 模型",
@@ -125,7 +131,7 @@
     "viewsWelcome": [
       {
         "view": "copilotModels.sidebar",
-        "contents": "还没有第三方模型配置。\n[添加模型](command:copilotModels.add)\n[打开管理面板](command:copilotModels.open)"
+        "contents": "还没有第三方模型配置。\n[添加分组](command:copilotModels.addGroup)\n[添加模型](command:copilotModels.add)\n[打开管理面板](command:copilotModels.open)"
       }
     ],
     "menus": {
@@ -136,14 +142,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "copilotModels.add",
+          "command": "copilotModels.addGroup",
           "when": "view == copilotModels.sidebar",
           "group": "navigation@2"
         },
         {
-          "command": "copilotModels.refresh",
+          "command": "copilotModels.add",
           "when": "view == copilotModels.sidebar",
           "group": "navigation@3"
+        },
+        {
+          "command": "copilotModels.refresh",
+          "when": "view == copilotModels.sidebar",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

@@ -7,6 +7,7 @@ import type {
   ModelDraft,
   ModelRef,
   ValidationIssue,
+  VendorId,
 } from '../models/modelConfig.ts';
 import { isApiType, isVendorId, normalizeEffortLevels } from '../models/draft.ts';
 
@@ -37,6 +38,7 @@ export type ExtensionMessage =
   | { type: 'issues'; requestId: string; payload: { issues: ValidationIssue[] } }
   | { type: 'select'; payload: { ref?: ModelRef; group?: GroupRef } }
   | { type: 'start-create'; payload: { draft?: ModelDraft } }
+  | { type: 'start-create-group'; payload: Record<string, never> }
   | { type: 'start-copy'; payload: { ref: ModelRef } }
   | {
       type: 'response';
@@ -61,6 +63,16 @@ export interface RequestPayloads {
   'connection/cancel': Record<string, never>;
   'group/promptApiKey': { group: GroupRef; expectedFingerprint: string };
   'group/clearApiKey': { group: GroupRef; expectedFingerprint: string };
+  'group/create': {
+    vendor: VendorId;
+    name: string;
+    baseUrl: string;
+    apiType: ApiType;
+    allowInsecureHttp: boolean;
+    credentialMode: 'apiKey' | 'none';
+    apiKey?: string;
+    expectedFingerprint: string;
+  };
   'group/save': {
     group: GroupRef;
     expectedFingerprint: string;
@@ -101,6 +113,7 @@ const REQUEST_TYPES: readonly RequestType[] = [
   'connection/cancel',
   'group/promptApiKey',
   'group/clearApiKey',
+  'group/create',
   'group/save',
   'panel/openOfficial',
   'panel/openConfigFile',
@@ -322,6 +335,42 @@ export function parseWebviewRequest(value: unknown): WebviewRequest | ParsedRequ
         return { requestId, error: invalid('分组操作参数无效。') };
       }
       return { type, requestId, payload: { group, expectedFingerprint } };
+    }
+    case 'group/create': {
+      const vendor = payload['vendor'];
+      const name = text(payload['name'], 80);
+      const baseUrl = text(payload['baseUrl'], 4_000);
+      const apiType = payload['apiType'];
+      const credentialMode = payload['credentialMode'];
+      const apiKey = text(payload['apiKey'], 4_000);
+      const expectedFingerprint = parseFingerprint(payload['expectedFingerprint']);
+      if (
+        !isVendorId(vendor) ||
+        !name ||
+        !baseUrl ||
+        !isApiType(apiType) ||
+        (credentialMode !== 'apiKey' && credentialMode !== 'none') ||
+        !expectedFingerprint
+      ) {
+        return { requestId, error: invalid('添加分组参数无效。') };
+      }
+      if (credentialMode === 'apiKey' && !apiKey) {
+        return { requestId, error: invalid('使用 API Key 时必须填写密钥。') };
+      }
+      return {
+        type,
+        requestId,
+        payload: {
+          vendor,
+          name,
+          baseUrl,
+          apiType,
+          allowInsecureHttp: bool(payload['allowInsecureHttp']) ?? false,
+          credentialMode,
+          apiKey: credentialMode === 'apiKey' ? apiKey : undefined,
+          expectedFingerprint,
+        },
+      };
     }
     case 'group/save': {
       const group = parseGroupRef(payload['group']);

@@ -9,7 +9,7 @@ import type { GroupRef, ModelRef } from '../models/modelConfig.ts';
 const VIEW_TYPE = 'copilotModels.panel';
 const TITLE = 'Copilot 模型管理';
 
-export type PanelMode = 'open' | 'add' | 'copy';
+export type PanelMode = 'open' | 'add' | 'add-group' | 'copy';
 
 export interface PanelContext {
   service: ModelConfigService;
@@ -138,6 +138,8 @@ export class ModelPanel {
     this.initialTarget = {};
     if (mode === 'add') {
       await this.post({ type: 'start-create', payload: {} });
+    } else if (mode === 'add-group') {
+      await this.post({ type: 'start-create-group', payload: {} });
     } else if (mode === 'copy' && target.ref) {
       await this.post({ type: 'start-copy', payload: { ref: target.ref } });
     } else if (target.group) {
@@ -155,6 +157,8 @@ export class ModelPanel {
     }
     if (mode === 'add') {
       void this.post({ type: 'start-create', payload: {} });
+    } else if (mode === 'add-group') {
+      void this.post({ type: 'start-create-group', payload: {} });
     } else if (mode === 'copy' && target.ref) {
       void this.post({ type: 'start-copy', payload: { ref: target.ref } });
     } else if (target.group) {
